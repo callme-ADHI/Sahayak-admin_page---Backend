@@ -1,0 +1,35 @@
+NEW TABLES DETAILS (UPDATED v3 - FINAL)
+=====================================
+
+This file documents the FINAL schema structure that results from applying `1.sql` (Initial Views), `2.sql` (Mapping Views), and `3.sql` (Critical Schema Consolidation).
+
+1. CORE TABLE RENAMES (Satisfying PostgREST)
+--------------------------------------------
+- `users`: Renamed `user_id` -> `id`. Direct table, no view.
+- `roles`: Renamed `role_id` -> `id`.
+- `categories`: Renamed from `skills`. `skill_id` -> `id`. `skill_name` -> `name`. (Table Altered)
+- `admins`: New table created for dashboard access.
+- `audit_logs`: Renamed `audit_log_id` -> `id`. Added `admin_id` FK.
+
+2. NEW DASHBOARD TABLES
+-----------------------
+- `verification_requests`: For worker KYC flow.
+- `payment_disputes`: For user/worker complaints.
+- `system_settings`: For dynamic config.
+- `admin_notifications`: For alerts.
+- `daily_statistics`: For cached analytics.
+- `reports`: For general flagging.
+- `banned_entities`: For moderation.
+- `worker_categories`: Created as a new standalone table to handle strictly typed relationships.
+
+3. MAPPED VIEWS (For Read Compatibility)
+----------------------------------------
+- `bookings`: Still a View mapping `jobs` + `skills`.
+- `workers`: Still a View mapping `worker_profiles` + `users`.
+- `payments`: Still a View mapping `transactions`.
+- `reviews`: Still a View mapping `ratings`.
+
+4. DATA MIGRATION NOTES
+-----------------------
+- User profile data (name, photo) has been merged into the `users` table for direct access.
+- Admin user has been seeded: `admin@jobkaro.com` (Check DB for password setup if auth system is active).

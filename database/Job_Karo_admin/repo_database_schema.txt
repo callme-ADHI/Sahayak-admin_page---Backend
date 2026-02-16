@@ -1,0 +1,604 @@
+JOB KARO ADMIN - REPOSITORY DATABASE SCHEMA
+==========================================
+
+This document lists the tables currently existing in the repository (as defined in supabase/migrations/20251212134201_a74b9014-e994-4bcd-a641-6a01d1a0ced1.sql).
+
+1. categories
+   - id: UUID (PK)
+   - name: TEXT (UNIQUE)
+   - description: TEXT
+   - icon: TEXT
+   - base_rate: NUMERIC(10, 2)
+   - is_active: BOOLEAN
+   - display_order: INTEGER
+   - metadata: JSONB
+   - created_at: TIMESTAMPTZ
+   - updated_at: TIMESTAMPTZ
+
+2. category_fields
+   - id: UUID (PK)
+   - category_id: UUID (FK -> categories.id)
+   - field_label: TEXT
+   - field_type: TEXT (Enum: text, number, select, multiselect, date, time, textarea, file)
+   - is_required: BOOLEAN
+   - display_order: INTEGER
+   - config: JSONB
+   - created_at: TIMESTAMPTZ
+
+3. users
+   - id: UUID (PK)
+   - auth_user_id: UUID (FK -> auth.users.id)
+   - name: TEXT
+   - phone: TEXT
+   - email: TEXT
+   - profile_photo: TEXT
+   - public_bio: TEXT
+   - wallet_balance: NUMERIC(10, 2)
+   - status: TEXT (Enum: active, suspended, banned, pending)
+   - metadata: JSONB
+   - created_at: TIMESTAMPTZ
+   - updated_at: TIMESTAMPTZ
+   - last_active: TIMESTAMPTZ
+
+4. addresses
+   - id: UUID (PK)
+   - user_id: UUID (FK -> users.id)
+   - label: TEXT
+   - address_text: TEXT
+   - city: TEXT
+   - district: TEXT
+   - pin: TEXT
+   - is_default: BOOLEAN
+   - created_at: TIMESTAMPTZ
+   - updated_at: TIMESTAMPTZ
+
+5. user_device_tokens
+   - id: UUID (PK)
+   - user_id: UUID (FK -> users.id)
+   - token: TEXT (UNIQUE)
+   - platform: TEXT (Enum: android, ios, web)
+   - is_active: BOOLEAN
+   - created_at: TIMESTAMPTZ
+   - last_used: TIMESTAMPTZ
+
+6. user_wallet_transactions
+   - id: UUID (PK)
+   - user_id: UUID (FK -> users.id)
+   - amount: NUMERIC(10, 2)
+   - transaction_type: TEXT (Enum: credit, debit, refund, bonus)
+   - reference_type: TEXT (Enum: booking, refund, topup, bonus, adjustment)
+   - reference_id: UUID
+   - balance_before: NUMERIC(10, 2)
+   - balance_after: NUMERIC(10, 2)
+   - description: TEXT
+   - metadata: JSONB
+   - created_at: TIMESTAMPTZ
+
+7. user_notifications
+   - id: UUID (PK)
+   - user_id: UUID (FK -> users.id)
+   - title: TEXT
+   - body: TEXT
+   - notification_type: TEXT
+   - data: JSONB
+   - is_read: BOOLEAN
+   - read_at: TIMESTAMPTZ
+   - priority: TEXT
+   - created_at: TIMESTAMPTZ
+
+8. promo_codes
+   - code: TEXT (PK)
+   - description: TEXT
+   - discount_type: TEXT (Enum: flat, percentage)
+   - discount_value: NUMERIC(10, 2)
+   - max_discount_amount: NUMERIC(10, 2)
+   - min_booking_amount: NUMERIC(10, 2)
+   - max_usage: INTEGER
+   - usage_count: INTEGER
+   - max_usage_per_user: INTEGER
+   - applicable_categories: UUID[]
+   - is_active: BOOLEAN
+   - valid_from: TIMESTAMPTZ
+   - valid_until: TIMESTAMPTZ
+   - metadata: JSONB
+   - created_at: TIMESTAMPTZ
+   - updated_at: TIMESTAMPTZ
+
+9. workers
+   - id: UUID (PK)
+   - auth_user_id: UUID (FK -> auth.users.id)
+   - name: TEXT
+   - phone: TEXT
+   - email: TEXT
+   - profile_photo: TEXT
+   - experience_years: INTEGER
+   - hourly_rate: NUMERIC(10, 2)
+   - day_rate: NUMERIC(10, 2)
+   - skills: TEXT[]
+   - languages: TEXT[]
+   - bio: TEXT
+   - average_rating: NUMERIC(3, 2)
+   - rating_count: INTEGER
+   - total_jobs_completed: INTEGER
+   - is_verified: BOOLEAN
+   - verification_status: TEXT (Enum: pending, approved, rejected)
+   - status: TEXT (Enum: active, inactive, suspended, banned)
+   - is_available: BOOLEAN
+   - metadata: JSONB
+   - created_at: TIMESTAMPTZ
+   - updated_at: TIMESTAMPTZ
+   - last_active: TIMESTAMPTZ
+   - verified_at: TIMESTAMPTZ
+
+10. worker_categories
+    - id: UUID (PK)
+    - worker_id: UUID (FK -> workers.id)
+    - category_id: UUID (FK -> categories.id)
+    - is_primary: BOOLEAN
+    - years_experience: INTEGER
+    - rate_override: NUMERIC(10, 2)
+    - created_at: TIMESTAMPTZ
+    - UNIQUE(worker_id, category_id)
+
+11. worker_availability
+    - id: UUID (PK)
+    - worker_id: UUID (FK -> workers.id)
+    - day_of_week: INTEGER
+    - start_time: TIME
+    - end_time: TIME
+    - is_available: BOOLEAN
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+    - UNIQUE(worker_id, day_of_week)
+
+12. worker_availability_exceptions
+    - id: UUID (PK)
+    - worker_id: UUID (FK -> workers.id)
+    - exception_date: DATE
+    - start_time: TIME
+    - end_time: TIME
+    - is_available: BOOLEAN
+    - reason: TEXT
+    - created_at: TIMESTAMPTZ
+    - UNIQUE(worker_id, exception_date)
+
+13. verification_documents
+    - id: UUID (PK)
+    - worker_id: UUID (FK -> workers.id)
+    - document_type: TEXT (Enum: aadhar, pan, driving_license, etc.)
+    - document_number: TEXT
+    - document_url: TEXT
+    - front_image_url: TEXT
+    - back_image_url: TEXT
+    - verification_status: TEXT (Enum: pending, approved, rejected)
+    - verified_by: UUID
+    - verified_at: TIMESTAMPTZ
+    - rejection_reason: TEXT
+    - admin_notes: TEXT
+    - expiry_date: DATE
+    - metadata: JSONB
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+
+14. portfolio_items
+    - id: UUID (PK)
+    - worker_id: UUID (FK -> workers.id)
+    - image_url: TEXT
+    - caption: TEXT
+    - display_order: INTEGER
+    - is_featured: BOOLEAN
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+
+15. worker_device_tokens (Same structure as user_device_tokens but for workers)
+    - id: UUID (PK)
+    - worker_id: UUID (FK -> workers.id)
+    ...
+
+16. worker_notifications (Same structure as user_notifications but for workers)
+    - id: UUID (PK)
+    - worker_id: UUID (FK -> workers.id)
+    ...
+
+17. worker_working_areas
+    - id: UUID (PK)
+    - worker_id: UUID (FK -> workers.id)
+    - area_name: TEXT
+    - city: TEXT
+    - district: TEXT
+    - pin_codes: TEXT[]
+    - radius_km: INTEGER
+    - is_primary: BOOLEAN
+    - created_at: TIMESTAMPTZ
+
+18. worker_blocked_users
+    - id: UUID (PK)
+    - worker_id: UUID (FK -> workers.id)
+    - blocked_user_id: UUID (FK -> users.id)
+    - reason: TEXT
+    - created_at: TIMESTAMPTZ
+
+19. worker_certifications
+    - id: UUID (PK)
+    - worker_id: UUID (FK -> workers.id)
+    - certification_name: TEXT
+    - issuing_organization: TEXT
+    - certificate_number: TEXT
+    - issue_date: DATE
+    - expiry_date: DATE
+    - certificate_url: TEXT
+    - is_verified: BOOLEAN
+    - verified_by: UUID
+    - verified_at: TIMESTAMPTZ
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+
+20. worker_bank_accounts
+    - id: UUID (PK)
+    - worker_id: UUID (FK -> workers.id)
+    - account_holder_name: TEXT
+    - account_number: TEXT
+    - ifsc_code: TEXT
+    - bank_name: TEXT
+    - branch_name: TEXT
+    - account_type: TEXT
+    - is_verified: BOOLEAN
+    - is_primary: BOOLEAN
+    - verified_at: TIMESTAMPTZ
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+
+21. bookings
+    - id: UUID (PK)
+    - user_id: UUID (FK -> users.id)
+    - worker_id: UUID (FK -> workers.id)
+    - category_id: UUID (FK -> categories.id)
+    - category_name: TEXT
+    - service_date: DATE
+    - start_time: TIME
+    - duration_hours: NUMERIC(4, 2)
+    - job_address_id: UUID (FK -> addresses.id)
+    - job_details: JSONB
+    - price: NUMERIC(10, 2)
+    - tip: NUMERIC(10, 2)
+    - booking_status: TEXT (Enum: pending, accepted, rejected, in_progress, completed, cancelled)
+    - payment_status: TEXT (Enum: pending, paid, etc.)
+    - notes: TEXT
+    - cancellation_reason: TEXT
+    - cancelled_by: UUID
+    - accepted_at: TIMESTAMPTZ
+    - started_at: TIMESTAMPTZ
+    - completed_at: TIMESTAMPTZ
+    - cancelled_at: TIMESTAMPTZ
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+
+22. payments
+    - id: UUID (PK)
+    - booking_id: UUID (FK -> bookings.id)
+    - user_id: UUID (FK -> users.id)
+    - worker_id: UUID (FK -> workers.id)
+    - amount: NUMERIC(10, 2)
+    - currency: TEXT
+    - payment_method: TEXT
+    - gateway_reference: TEXT
+    - gateway_response: JSONB
+    - status: TEXT (Enum: pending, processing, success, failed, refunded)
+    - refund_amount: NUMERIC(10, 2)
+    - refund_reason: TEXT
+    - refunded_at: TIMESTAMPTZ
+    - metadata: JSONB
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+
+23. worker_earnings
+    - id: UUID (PK)
+    - worker_id: UUID (FK -> workers.id)
+    - booking_id: UUID (FK -> bookings.id)
+    - payment_id: UUID (FK -> payments.id)
+    - gross_amount: NUMERIC(10, 2)
+    - platform_fee: NUMERIC(10, 2)
+    - net_amount: NUMERIC(10, 2)
+    - payout_status: TEXT
+    - payout_date: TIMESTAMPTZ
+    - payout_reference: TEXT
+    - metadata: JSONB
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+
+24. worker_payout_requests
+    - id: UUID (PK)
+    - worker_id: UUID (FK -> workers.id)
+    - bank_account_id: UUID (FK -> worker_bank_accounts.id)
+    - amount: NUMERIC(10, 2)
+    - status: TEXT
+    - processed_by: UUID
+    - processed_at: TIMESTAMPTZ
+    - transaction_reference: TEXT
+    - rejection_reason: TEXT
+    - admin_notes: TEXT
+    - metadata: JSONB
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+
+25. reviews
+    - id: UUID (PK)
+    - booking_id: UUID (FK -> bookings.id) (UNIQUE)
+    - user_id: UUID (FK -> users.id)
+    - worker_id: UUID (FK -> workers.id)
+    - rating: INTEGER (1-5)
+    - comment: TEXT
+    - is_public: BOOLEAN
+    - is_flagged: BOOLEAN
+    - admin_notes: TEXT
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+
+26. chat_threads
+    - id: UUID (PK)
+    - user_id: UUID (FK -> users.id)
+    - worker_id: UUID (FK -> workers.id)
+    - booking_id: UUID (FK -> bookings.id)
+    - last_message_at: TIMESTAMPTZ
+    - is_active: BOOLEAN
+    - created_at: TIMESTAMPTZ
+    - UNIQUE(user_id, worker_id, booking_id)
+
+27. messages
+    - id: UUID (PK)
+    - thread_id: UUID (FK -> chat_threads.id)
+    - sender_id: UUID
+    - sender_type: TEXT (Enum: user, worker)
+    - receiver_id: UUID
+    - receiver_type: TEXT (Enum: user, worker)
+    - message_text: TEXT
+    - attachment_url: TEXT
+    - attachment_type: TEXT
+    - attachment_metadata: JSONB
+    - is_read: BOOLEAN
+    - read_at: TIMESTAMPTZ
+    - created_at: TIMESTAMPTZ
+
+28. promo_code_usage
+    - id: UUID (PK)
+    - promo_code: TEXT (FK -> promo_codes.code)
+    - user_id: UUID (FK -> users.id)
+    - booking_id: UUID (FK -> bookings.id)
+    - discount_amount: NUMERIC(10, 2)
+    - created_at: TIMESTAMPTZ
+    - UNIQUE(promo_code, user_id, booking_id)
+
+29. admins
+    - id: UUID (PK)
+    - auth_user_id: UUID (FK -> auth.users.id)
+    - name: TEXT
+    - email: TEXT (UNIQUE)
+    - phone: TEXT
+    - role: TEXT (Enum: super_admin, admin, verifier, support, finance, operations)
+    - permissions: JSONB
+    - status: TEXT (Enum: active, inactive, suspended)
+    - last_login: TIMESTAMPTZ
+    - is_2fa_enabled: BOOLEAN
+    - profile_photo: TEXT
+    - metadata: JSONB
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+    - created_by: UUID (FK -> admins.id)
+
+30. roles
+    - id: UUID (PK)
+    - role_name: TEXT (UNIQUE)
+    - display_name: TEXT
+    - description: TEXT
+    - permissions: JSONB
+    - is_system_role: BOOLEAN
+    - is_active: BOOLEAN
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+
+31. admin_roles
+    - id: UUID (PK)
+    - admin_id: UUID (FK -> admins.id)
+    - role_id: UUID (FK -> roles.id)
+    - assigned_by: UUID (FK -> admins.id)
+    - assigned_at: TIMESTAMPTZ
+    - UNIQUE(admin_id, role_id)
+
+32. audit_logs
+    - id: UUID (PK)
+    - admin_id: UUID (FK -> admins.id)
+    - action_type: TEXT
+    - target_type: TEXT
+    - target_id: UUID
+    - description: TEXT
+    - ip_address: TEXT
+    - user_agent: TEXT
+    - before_data: JSONB
+    - after_data: JSONB
+    - metadata: JSONB
+    - created_at: TIMESTAMPTZ
+
+33. reports
+    - id: UUID (PK)
+    - reporter_id: UUID
+    - reporter_type: TEXT (Enum: user, worker, admin)
+    - reported_id: UUID
+    - reported_type: TEXT (Enum: user, worker, booking)
+    - booking_id: UUID (FK -> bookings.id)
+    - report_type: TEXT
+    - description: TEXT
+    - evidence_urls: TEXT[]
+    - priority: TEXT
+    - status: TEXT (Enum: open, under_review, resolved, dismissed)
+    - assigned_to: UUID (FK -> admins.id)
+    - admin_notes: TEXT
+    - resolution: TEXT
+    - resolved_at: TIMESTAMPTZ
+    - resolved_by: UUID (FK -> admins.id)
+    - metadata: JSONB
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+
+34. verification_requests
+    - id: UUID (PK)
+    - worker_id: UUID (FK -> workers.id)
+    - request_type: TEXT
+    - status: TEXT
+    - documents_submitted: JSONB
+    - reviewed_by: UUID (FK -> admins.id)
+    - reviewed_at: TIMESTAMPTZ
+    - rejection_reason: TEXT
+    - admin_notes: TEXT
+    - metadata: JSONB
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+
+35. admin_notifications
+    - id: UUID (PK)
+    - admin_id: UUID (FK -> admins.id)
+    - title: TEXT
+    - body: TEXT
+    - notification_type: TEXT
+    - priority: TEXT
+    - action_url: TEXT
+    - data: JSONB
+    - is_read: BOOLEAN
+    - read_at: TIMESTAMPTZ
+    - created_at: TIMESTAMPTZ
+
+36. system_settings
+    - key: TEXT (PK)
+    - value: JSONB
+    - description: TEXT
+    - category: TEXT
+    - is_public: BOOLEAN
+    - is_editable: BOOLEAN
+    - updated_by: UUID (FK -> admins.id)
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+
+37. platform_fees
+    - id: UUID (PK)
+    - category_id: UUID (FK -> categories.id)
+    - fee_type: TEXT
+    - percentage_fee: NUMERIC(5, 2)
+    - flat_fee: NUMERIC(10, 2)
+    - min_fee: NUMERIC(10, 2)
+    - max_fee: NUMERIC(10, 2)
+    - is_active: BOOLEAN
+    - effective_from: TIMESTAMPTZ
+    - effective_until: TIMESTAMPTZ
+    - created_by: UUID (FK -> admins.id)
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+
+38. transaction_logs
+    - id: UUID (PK)
+    - entity_type: TEXT
+    - entity_id: UUID
+    - event_type: TEXT
+    - event_category: TEXT
+    - description: TEXT
+    - metadata: JSONB
+    - ip_address: TEXT
+    - user_agent: TEXT
+    - created_at: TIMESTAMPTZ
+
+39. analytics_metrics
+    - id: UUID (PK)
+    - metric_type: TEXT
+    - metric_category: TEXT
+    - metric_value: NUMERIC
+    - dimensions: JSONB
+    - time_period: TEXT
+    - period_start: TIMESTAMPTZ
+    - period_end: TIMESTAMPTZ
+    - metadata: JSONB
+    - calculated_at: TIMESTAMPTZ
+    - UNIQUE(metric_type, time_period, period_start)
+
+40. daily_statistics
+    - id: UUID (PK)
+    - date: DATE (UNIQUE)
+    - total_bookings: INTEGER
+    - completed_bookings: INTEGER
+    - cancelled_bookings: INTEGER
+    - pending_bookings: INTEGER
+    - new_users: INTEGER
+    - new_workers: INTEGER
+    - active_users: INTEGER
+    - active_workers: INTEGER
+    - total_revenue: NUMERIC(12, 2)
+    - platform_revenue: NUMERIC(12, 2)
+    - worker_earnings: NUMERIC(12, 2)
+    - average_booking_value: NUMERIC(10, 2)
+    - average_rating: NUMERIC(3, 2)
+    - total_reviews: INTEGER
+    - metadata: JSONB
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+
+41. payment_disputes
+    - id: UUID (PK)
+    - payment_id: UUID (FK -> payments.id)
+    - booking_id: UUID (FK -> bookings.id)
+    - raised_by: UUID
+    - raised_by_type: TEXT
+    - dispute_type: TEXT
+    - amount_disputed: NUMERIC(10, 2)
+    - description: TEXT
+    - evidence_urls: TEXT[]
+    - status: TEXT
+    - resolution: TEXT
+    - refund_amount: NUMERIC(10, 2)
+    - assigned_to: UUID (FK -> admins.id)
+    - resolved_by: UUID (FK -> admins.id)
+    - resolved_at: TIMESTAMPTZ
+    - admin_notes: TEXT
+    - metadata: JSONB
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+
+42. announcements
+    - id: UUID (PK)
+    - title: TEXT
+    - body: TEXT
+    - announcement_type: TEXT
+    - target_audience: TEXT
+    - priority: TEXT
+    - is_active: BOOLEAN
+    - start_date: TIMESTAMPTZ
+    - end_date: TIMESTAMPTZ
+    - created_by: UUID (FK -> admins.id)
+    - metadata: JSONB
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+
+43. banned_entities
+    - id: UUID (PK)
+    - entity_id: UUID
+    - entity_type: TEXT
+    - ban_type: TEXT
+    - reason: TEXT
+    - banned_by: UUID (FK -> admins.id)
+    - ban_expires_at: TIMESTAMPTZ
+    - is_active: BOOLEAN
+    - lifted_by: UUID (FK -> admins.id)
+    - lifted_at: TIMESTAMPTZ
+    - lift_reason: TEXT
+    - metadata: JSONB
+    - created_at: TIMESTAMPTZ
+    - updated_at: TIMESTAMPTZ
+
+44. app_versions
+    - id: UUID (PK)
+    - platform: TEXT
+    - app_type: TEXT
+    - version_number: TEXT
+    - version_code: INTEGER
+    - is_force_update: BOOLEAN
+    - is_active: BOOLEAN
+    - released_by: UUID (FK -> admins.id)
+    - released_at: TIMESTAMPTZ
+    - created_at: TIMESTAMPTZ
+    - UNIQUE(platform, app_type, version_number)

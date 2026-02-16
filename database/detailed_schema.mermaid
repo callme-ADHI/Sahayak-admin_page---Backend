@@ -1,0 +1,318 @@
+erDiagram
+    %% ======================================================================================
+    %% JOB KARO ADMIN - COMPLETE DETAILED SCHEMA
+    %% Covers all Core, Service, Finance, and Admin tables with Attributes, PKs, and FKs
+    %% ======================================================================================
+
+    %% 1. CORE IDENTITY & ACCESS
+    USERS {
+        UUID id PK "Renamed from user_id"
+        string phone UK "Unique Phone Number"
+        string email UK "Unique Email Address"
+        string password_hash "Encrypted Password"
+        string account_status "active, suspended, banned"
+        boolean is_verified "KYC Status"
+        string name "Full Name (Cached)"
+        string profile_photo "Avatar URL"
+        numeric wallet_balance "Current Balance"
+        int failed_login_attempts
+        timestamp last_login_at
+        timestamp terms_accepted_at
+        timestamp created_at
+    }
+
+    ROLES {
+        int id PK
+        string role_name UK "e.g. customer, worker"
+        string description
+        boolean is_system_role
+        timestamp created_at
+    }
+
+    USER_ROLES {
+        UUID user_id PK,FK
+        int role_id PK,FK
+        boolean is_active
+        UUID assigned_by FK
+        timestamp assigned_at
+    }
+
+    USER_PROFILES {
+        UUID user_id PK,FK "One-to-One with Users"
+        string full_name
+        string gender
+        date date_of_birth
+        string profile_photo_url
+        string preferred_language
+    }
+
+    ADMINS {
+        UUID id PK
+        UUID auth_user_id FK "Link to auth system"
+        string name
+        string email UK
+        string phone
+        string role "super_admin, admin, support"
+        jsonb permissions "Access flags"
+        string status "active, inactive"
+        timestamp last_login
+        timestamp created_at
+    }
+
+    %% 2. WORKER MANAGEMENT
+    WORKER_PROFILES {
+        UUID user_id PK,FK "One-to-One with Users"
+        string worker_status "active, offline"
+        string government_id_number UK
+        int experience_years
+        text bio
+        float average_rating
+        int total_jobs_completed
+        boolean is_available
+    }
+
+    VERIFICATION_REQUESTS {
+        UUID id PK
+        UUID worker_id FK
+        string request_type "Default: initial_verification"
+        string status "pending, approved, rejected"
+        jsonb documents_submitted "Array of URLs"
+        UUID reviewed_by FK
+        timestamp reviewed_at
+        text rejection_reason
+        text admin_notes
+        timestamp created_at
+    }
+
+    %% 3. SERVICE CATEGORIES & SKILLS
+    CATEGORIES {
+        int id PK "Renamed from skill_id"
+        string name UK "Renamed from skill_name"
+        string description
+        string icon "UI Icon"
+        numeric base_rate "Starting Price"
+        boolean is_active
+        int display_order
+        timestamp created_at
+    }
+
+    WORKER_CATEGORIES {
+        UUID id PK
+        UUID worker_id FK
+        int category_id FK
+        boolean is_primary
+        numeric rate_override
+        string experience_level
+        timestamp created_at
+    }
+
+    %% 4. JOBS & LOCATIONS
+    ADDRESSES {
+        UUID address_id PK
+        UUID user_id FK
+        string address_line
+        string landmark
+        string city
+        string state
+        string pincode
+        decimal latitude
+        decimal longitude
+        string label "home, work"
+        boolean is_default
+    }
+
+    JOBS {
+        UUID job_id PK
+        UUID user_id FK "Customer"
+        int skill_id FK "Category"
+        UUID address_id FK
+        string job_status "pending, in_progress, completed, cancelled"
+        text description
+        timestamp scheduled_at
+        float estimated_price
+        float final_price
+        text cancellation_reason
+        timestamp created_at
+    }
+
+    JOB_ASSIGNMENTS {
+        UUID job_id PK,FK
+        UUID worker_id FK
+        string assignment_status "accepted, rejected"
+        timestamp assigned_at
+        timestamp accepted_at
+        timestamp started_at
+        timestamp completed_at
+    }
+
+    JOB_STATUS_HISTORY {
+        int history_id PK
+        UUID job_id FK
+        string old_status
+        string new_status
+        UUID changed_by FK
+        timestamp changed_at
+    }
+
+    %% 5. FINANCE & TRANSACTIONS
+    WALLETS {
+        UUID user_id PK,FK
+        float current_balance
+        string currency "INR"
+        timestamp last_updated_at
+    }
+
+    TRANSACTIONS {
+        UUID transaction_id PK
+        UUID job_id FK
+        UUID from_user_id FK
+        UUID to_user_id FK
+        float amount
+        string transaction_type "credit, debit"
+        string transaction_status "success, pending, failed"
+        string gateway_reference
+        text failure_reason
+        timestamp created_at
+    }
+
+    PLATFORM_COMMISSIONS {
+        UUID job_id PK,FK
+        float commission_percentage
+        float commission_amount
+        timestamp calculated_at
+    }
+
+    PAYMENT_DISPUTES {
+        UUID id PK
+        UUID booking_id FK
+        UUID raised_by FK "User or Worker"
+        numeric amount_disputed
+        string status "open, resolved"
+        text resolution
+        timestamp created_at
+    }
+
+    %% 6. FEEDBACK & MODERATION
+    RATINGS {
+        UUID rating_id PK
+        UUID job_id FK
+        UUID from_user_id FK
+        UUID to_user_id FK
+        int rating_value "1-5"
+        text review_text
+        string rating_type
+        timestamp created_at
+    }
+
+    REPORTS {
+        UUID id PK
+        UUID reporter_id FK
+        string report_type "abuse, scam"
+        text description
+        string status "open, resolved"
+        timestamp created_at
+    }
+
+    BANNED_ENTITIES {
+        UUID id PK
+        UUID entity_id FK "User/Worker ID"
+        string entity_type "user, worker"
+        text reason
+        boolean is_active
+        timestamp created_at
+    }
+
+    %% 7. ADMIN, AUDIT & SYSTEM
+    ADMIN_ACTIONS {
+        UUID admin_action_id PK
+        UUID admin_user_id FK
+        string action_type
+        string target_entity_type
+        UUID target_entity_id
+        text action_reason
+        timestamp created_at
+    }
+
+    AUDIT_LOGS {
+        UUID id PK
+        UUID admin_id FK
+        string action_type "create, update, delete"
+        string target_type
+        UUID target_id
+        text description
+        timestamp created_at
+    }
+
+    ADMIN_NOTIFICATIONS {
+        UUID id PK
+        string title
+        text body
+        string priority "normal, high"
+        boolean is_read
+        timestamp created_at
+    }
+
+    SYSTEM_SETTINGS {
+        string key PK
+        jsonb value
+        string description
+        boolean is_public
+        boolean is_editable
+    }
+
+    DAILY_STATISTICS {
+        UUID id PK
+        date date UK
+        int total_bookings
+        int completed_bookings
+        numeric total_revenue
+        jsonb metadata
+    }
+
+    %% ======================================================================================
+    %% RELATIONSHIPS
+    %% ======================================================================================
+
+    %% Identity Relationship
+    USERS ||--o{ USER_ROLES : has
+    ROLES ||--o{ USER_ROLES : assigned_to
+    USERS ||--|| USER_PROFILES : "has profile"
+    USERS ||--o| WORKER_PROFILES : "is worker"
+    USERS ||--|| WALLETS : "owns wallet"
+    USERS ||--o{ ADDRESSES : "has addresses"
+    USERS ||--o{ ADMINS : "linked auth user"
+
+    %% Service & Worker
+    WORKER_PROFILES ||--o{ WORKER_CATEGORIES : "provides services"
+    CATEGORIES ||--o{ WORKER_CATEGORIES : "listed in"
+    WORKER_PROFILES ||--o{ VERIFICATION_REQUESTS : "submits kyc"
+    ADMINS ||--o{ VERIFICATION_REQUESTS : "reviews kyc"
+
+    %% Job Flow
+    USERS ||--o{ JOBS : "requests job"
+    CATEGORIES ||--o{ JOBS : "requires category"
+    ADDRESSES ||--o{ JOBS : "at location"
+    
+    JOBS ||--o| JOB_ASSIGNMENTS : "assigned to"
+    WORKER_PROFILES ||--o{ JOB_ASSIGNMENTS : "accepts job"
+    
+    JOBS ||--o{ JOB_STATUS_HISTORY : "tracks status"
+    USERS ||--o{ JOB_STATUS_HISTORY : "modifies status"
+
+    %% Financial Flow
+    JOBS ||--o{ TRANSACTIONS : "paid for"
+    USERS ||--o{ TRANSACTIONS : "sender/receiver"
+    JOBS ||--o| PLATFORM_COMMISSIONS : "yields commission"
+    
+    JOBS ||--o{ PAYMENT_DISPUTES : "has dispute"
+    USERS ||--o{ PAYMENT_DISPUTES : "raises dispute"
+
+    %% Feedback Flow
+    JOBS ||--o{ RATINGS : "reviewed"
+    USERS ||--o{ RATINGS : "writes review"
+
+    %% Admin & Audit Flow
+    USERS ||--o{ REPORTS : "files report"
+    ADMINS ||--o{ AUDIT_LOGS : "generates audit"
+    ADMINS ||--o{ ADMIN_ACTIONS : "performs action"
+    ADMINS ||--o{ BANNED_ENTITIES : "bans entity"

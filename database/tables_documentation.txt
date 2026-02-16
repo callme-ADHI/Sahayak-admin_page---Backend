@@ -1,0 +1,256 @@
+JOB KARO ADMIN - DATABASE SCHEMA DOCUMENTATION
+==============================================
+Version: 1.0.0
+Date: 2026-02-16
+Database System: PostgreSQL (Supabase)
+
+This document serves as the formal technical specification for the Job Karo Admin database schema. It details all data entities, including core tables, administrative tables, and compatibility views used by the dashboard.
+
+--------------------------------------------------------------------------------
+1. CORE IDENTITY & ACCESS
+--------------------------------------------------------------------------------
+
+1.1 USERS
+Type: Table
+Description: The central entity for all registered accounts (both customers and potential workers).
+COLUMNS:
+  - id                      [UUID]          [PK, Default: v4()]  : Unique user identifier.
+  - phone                   [VARCHAR(15)]   [UNIQUE, NOT NULL]   : Primary contact/login credential.
+  - email                   [VARCHAR(255)]  [UNIQUE]             : Optional recovery/contact email.
+  - password_hash           [TEXT]          [NOT NULL]           : Encrypted password (if not using Auth Service).
+  - account_status          [VARCHAR(20)]   [Default: 'active']  : State: 'active', 'suspended', 'banned'.
+  - is_verified             [BOOLEAN]       [Default: FALSE]     : KYC verification status.
+  - name                    [TEXT]          [Derived]            : Full name (cached from profile).
+  - profile_photo           [TEXT]          [Derived]            : Avatar URL.
+  - wallet_balance          [NUMERIC(10,2)] [Default: 0.00]      : Current holding balance.
+  - created_at              [TIMESTAMP]     [Default: NOW()]     : Registration timestamp.
+
+1.2 ADMINS
+Type: Table
+Description: System administrators with higher-level access privileges (Dashboard access).
+COLUMNS:
+  - id                      [UUID]          [PK, Default: v4()]  : Unique Admin ID.
+  - auth_user_id            [UUID]          [FK -> users.id]     : Link to Auth/User system.
+  - name                    [TEXT]          [NOT NULL]           : Admin's display name.
+  - email                   [TEXT]          [UNIQUE, NOT NULL]   : Admin login email.
+  - role                    [TEXT]          [Default: 'admin']   : Role: 'super_admin', 'admin', 'support'.
+  - status                  [TEXT]          [Default: 'active']  : active, inactive.
+  - permissions             [JSONB]         [Default: '{}']      : Granular permission flags.
+
+1.3 ROLES
+Type: Table
+Description: Definition of standard user roles in the system.
+COLUMNS:
+  - id                      [SERIAL]        [PK]                 : Unique Role ID.
+  - role_name               [VARCHAR(50)]   [UNIQUE, NOT NULL]   : e.g., 'customer', 'worker'.
+  - description             [TEXT]          [Optional]           : Description of the role.
+
+--------------------------------------------------------------------------------
+2. WORKER MANAGEMENT
+--------------------------------------------------------------------------------
+
+2.1 WORKER_PROFILES
+Type: Table
+Description: Extended attributes for users who are registered as service providers.
+COLUMNS:
+  - user_id                 [UUID]          [PK, FK -> users.id] : Link to base user.
+  - worker_status           [VARCHAR(20)]   [NOT NULL]           : 'active', 'offline', 'banned'.
+  - government_id_number    [VARCHAR(30)]   [UNIQUE]             : ID for background checks.
+  - experience_years        [INT]           [Optional]           : Professional experience.
+  - average_rating          [FLOAT]         [Default: 0]         : Aggregate star rating (1-5).
+  - total_jobs_completed    [INT]           [Default: 0]         : Career job count.
+  - is_available            [BOOLEAN]       [Default: TRUE]      : Online/Offline toggle.
+
+2.2 WORKERS (View)
+Type: View
+Description: Compatibility view merging `users` and `worker_profiles` for the Admin Dashboard.
+COLUMNS:
+  - id                      [UUID]          : Worker ID.
+  - name                    [TEXT]          : Full Name.
+  - phone                   [TEXT]          : Contact.
+  - status                  [TEXT]          : Worker Status.
+  - verification_status     [TEXT]          : 'approved' | 'pending'.
+  - is_available            [BOOLEAN]       : Online status.
+  - skills                  [TEXT[]]        : Array of skill names.
+
+2.3 VERIFICATION_REQUESTS
+Type: Table
+Description: Queue for managing worker document submissions (KYC).
+COLUMNS:
+  - id                      [UUID]          [PK, Default: v4()]  : Request ID.
+  - worker_id               [UUID]          [NOT NULL]           : The worker submitting proofs.
+  - status                  [TEXT]          [Default: 'pending'] : pending, approved, rejected.
+  - documents_submitted     [JSONB]         [Default: '[]']      : List of document URLs.
+  - reviewed_by             [UUID]          [FK -> admins.id]    : Admin who processed the request.
+  - admin_notes             [TEXT]          [Optional]           : Internal notes on the decision.
+
+--------------------------------------------------------------------------------
+3. SERVICE CATEGORIES
+--------------------------------------------------------------------------------
+
+3.1 CATEGORIES
+Type: Table (Renamed from `skills`)
+Description: Catalog of services offered on the platform (e.g., Cleaning, Plumbing).
+COLUMNS:
+  - id                      [SERIAL]        [PK]                 : Unique Category ID.
+  - name                    [VARCHAR(100)]  [UNIQUE, NOT NULL]   : Service Name.
+  - description             [TEXT]          [Optional]           : Service details.
+  - base_rate               [NUMERIC(10,2)] [Optional]           : Starting price.
+  - icon                    [TEXT]          [Optional]           : UI Icon identifier.
+  - is_active               [BOOLEAN]       [Default: TRUE]      : Visibility toggle.
+
+3.2 WORKER_CATEGORIES
+Type: Table
+Description: Association table linking Workers to specific Categories.
+COLUMNS:
+  - id                      [UUID]          [PK, Default: v4()]  : Unique Record ID.
+  - worker_id               [UUID]          [FK -> workers.id]   : Provider.
+  - category_id             [INT]           [FK -> categories.id]: Service.
+  - is_primary              [BOOLEAN]       [Default: FALSE]     : Is this their main skill?
+  - rate_override           [NUMERIC(10,2)] [Optional]           : Custom price for this worker.
+
+--------------------------------------------------------------------------------
+4. JOBS & BOOKINGS
+--------------------------------------------------------------------------------
+
+4.1 JOBS
+Type: Table (Base Table)
+Description: The core record of a service request created by a user.
+COLUMNS:
+  - job_id                  [UUID]          [PK, Default: v4()]  : Unique Job ID.
+  - user_id                 [UUID]          [FK -> users.id]     : Customer.
+  - skill_id                [INT]           [FK -> categories.id]: Service requested.
+  - address_id              [UUID]          [FK -> addresses.id] : Location.
+  - final_price             [FLOAT]         [Optional]           : Agreed price.
+  - job_status              [VARCHAR(30)]   [NOT NULL]           : pending, in_progress, completed.
+  - scheduled_at            [TIMESTAMP]     [Optional]           : Service time.
+
+4.2 BOOKINGS (View)
+Type: View
+Description: Enhanced view of `jobs` with joined details for the Dashboard grid.
+COLUMNS:
+  - id                      [UUID]          : Job ID.
+  - user_id                 [UUID]          : Customer ID.
+  - worker_id               [UUID]          : Assigned Provider (from assignments).
+  - category_name           [TEXT]          : Service Name.
+  - booking_status          [TEXT]          : Current status.
+  - payment_status          [TEXT]          : Paid/Pending (Derived).
+  - service_date            [TIMESTAMP]     : Scheduled Date.
+  - price                   [NUMERIC]       : Job Value.
+
+4.3 JOB_ASSIGNMENTS
+Type: Table
+Description: Tracks the acceptance of a job by a worker.
+COLUMNS:
+  - job_id                  [UUID]          [PK, FK -> jobs.id]  : The Job.
+  - worker_id               [UUID]          [FK -> workers.id]   : The Worker.
+  - assignment_status       [VARCHAR(30)]   [Optional]           : accepted, rejected, completed.
+  - accepted_at             [TIMESTAMP]     [Optional]           : Timestamp of acceptance.
+  - completed_at            [TIMESTAMP]     [Optional]           : Timestamp of completion.
+
+--------------------------------------------------------------------------------
+5. FINANCE & PAYMENTS
+--------------------------------------------------------------------------------
+
+5.1 TRANSACTIONS
+Type: Table
+Description: Ledger of all financial movements (payments, refunds).
+COLUMNS:
+  - transaction_id          [UUID]          [PK, Default: v4()]  : Unique TXN ID.
+  - job_id                  [UUID]          [FK -> jobs.id]      : Context.
+  - from_user_id            [UUID]          [FK -> users.id]     : Sender.
+  - to_user_id              [UUID]          [FK -> users.id]     : Receiver.
+  - amount                  [FLOAT]         [NOT NULL]           : Value.
+  - transaction_status      [VARCHAR(30)]   [NOT NULL]           : success, failed, pending.
+
+5.2 PAYMENTS (View)
+Type: View
+Description: Compatibility view on `transactions` for the Payments module.
+COLUMNS:
+  - id                      [UUID]          : Payment ID.
+  - booking_id              [UUID]          : Linked Job.
+  - amount                  [FLOAT]         : Amount.
+  - status                  [TEXT]          : Payment Status.
+  - refund_amount           [NUMERIC]       : Processed refund (if any).
+
+5.3 PAYMENT_DISPUTES
+Type: Table
+Description: Management of financial disagreements.
+COLUMNS:
+  - id                      [UUID]          [PK, Default: v4()]  : Dispute ID.
+  - booking_id              [UUID]          [FK -> bookings.id]  : The Job.
+  - raised_by               [UUID]          [NOT NULL]           : User/Worker ID.
+  - amount_disputed         [NUMERIC]       [Optional]           : Contested amount.
+  - status                  [TEXT]          [Default: 'open']    : open, resolved.
+  - resolution              [TEXT]          [Optional]           : Admin decision.
+
+--------------------------------------------------------------------------------
+6. SYSTEM ADMINISTRATION
+--------------------------------------------------------------------------------
+
+6.1 SYSTEM_SETTINGS
+Type: Table
+Description: Key-Value store for dynamic platform configuration.
+COLUMNS:
+  - key                     [TEXT]          [PK]                 : Setting Name (e.g. 'maintenance_mode').
+  - value                   [JSONB]         [NOT NULL]           : Setting Value.
+  - description             [TEXT]          [Optional]           : Usage explanation.
+  - is_public               [BOOLEAN]       [Default: FALSE]     : Exposed to frontend API?
+
+6.2 ADMIN_NOTIFICATIONS
+Type: Table
+Description: Internal alerts for dashboard administrators.
+COLUMNS:
+  - id                      [UUID]          [PK]                 : Alert ID.
+  - title                   [TEXT]          [NOT NULL]           : Headline.
+  - priority                [TEXT]          [Default: 'normal']  : Urgent/High/Normal.
+  - is_read                 [BOOLEAN]       [Default: FALSE]     : Read status.
+
+6.3 DAILY_STATISTICS
+Type: Table
+Description: Pre-aggregated metrics for performance charting.
+COLUMNS:
+  - id                      [UUID]          [PK]                 : Record ID.
+  - date                    [DATE]          [UNIQUE, NOT NULL]   : The date of stats.
+  - total_bookings          [INT]           [Default: 0]         : New jobs count.
+  - completed_bookings      [INT]           [Default: 0]         : Completed jobs count.
+  - total_revenue           [NUMERIC]       [Default: 0]         : Gross volume.
+
+6.4 REPORTS
+Type: Table
+Description: General purpose ticketing system (abuse, bugs, spam).
+COLUMNS:
+  - id                      [UUID]          [PK]                 : Report ID.
+  - reporter_id             [UUID]          [NOT NULL]           : User reporting.
+  - report_type             [TEXT]          [NOT NULL]           : Category.
+  - description             [TEXT]          [NOT NULL]           : Incident details.
+  - status                  [TEXT]          [Default: 'open']    : open, resolved, dismissed.
+
+6.5 BANNED_ENTITIES
+Type: Table
+Description: Registry of suspended users and workers.
+COLUMNS:
+  - id                      [UUID]          [PK]                 : Ban ID.
+  - entity_id               [UUID]          [NOT NULL]           : User/Worker ID.
+  - entity_type             [TEXT]          [NOT NULL]           : 'user', 'worker', 'ip'.
+  - reason                  [TEXT]          [NOT NULL]           : Reason for ban.
+  - is_active               [BOOLEAN]       [Default: TRUE]      : Is currently banned?
+
+--------------------------------------------------------------------------------
+7. AUDIT & LOGGING
+--------------------------------------------------------------------------------
+
+7.1 AUDIT_LOGS
+Type: Table
+Description: Immutable record of system actions for security and compliance.
+COLUMNS:
+  - id                      [UUID]          [PK]                 : Log ID.
+  - admin_id                [UUID]          [FK -> admins.id]    : Performer.
+  - action_type             [VARCHAR(50)]   [NOT NULL]           : create, update, delete, login.
+  - target_type             [VARCHAR(50)]   [Optional]           : entity affected (e.g., 'user').
+  - description             [TEXT]          [Optional]           : Human readable summary.
+  - created_at              [TIMESTAMP]     [Default: NOW()]     : Event time.
+
+--------------------------------------------------------------------------------
+END OF DOCUMENTATION
+--------------------------------------------------------------------------------

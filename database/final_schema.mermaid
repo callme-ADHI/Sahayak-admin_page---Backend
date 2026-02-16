@@ -1,0 +1,246 @@
+erDiagram
+    %% ---------------------------------------------------------
+    %% 1. IDENTITY & ACCESS (5 Tables)
+    %% ---------------------------------------------------------
+    USERS {
+        UUID id PK
+        string phone
+        string email
+        string password_hash
+        string account_status
+        boolean is_verified
+        numeric wallet_balance
+    }
+
+    ROLES {
+        int id PK
+        string role_name
+        string description
+    }
+
+    USER_ROLES {
+        UUID user_id PK, FK
+        int role_id PK, FK
+        boolean is_active
+    }
+
+    USER_PROFILES {
+        UUID user_id PK, FK
+        string full_name
+        string gender
+        string profile_photo_url
+    }
+
+    ADMINS {
+        UUID id PK
+        UUID auth_user_id FK
+        string name
+        string email
+        string role
+        jsonb permissions
+    }
+
+    %% ---------------------------------------------------------
+    %% 2. WORKER MANAGEMENT (3 Tables)
+    %% ---------------------------------------------------------
+    WORKER_PROFILES {
+        UUID user_id PK, FK
+        string worker_status
+        string government_id_number
+        float average_rating
+        boolean is_available
+    }
+
+    WORKER_CATEGORIES {
+        UUID id PK
+        UUID worker_id FK
+        int category_id FK
+        boolean is_primary
+        numeric rate_override
+    }
+
+    VERIFICATION_REQUESTS {
+        UUID id PK
+        UUID worker_id FK
+        string status
+        jsonb documents_submitted
+        UUID reviewed_by FK
+    }
+
+    %% ---------------------------------------------------------
+    %% 3. SERVICES & LOCATIONS (2 Tables)
+    %% ---------------------------------------------------------
+    CATEGORIES {
+        int id PK
+        string name
+        string description
+        numeric base_rate
+        string icon
+    }
+
+    ADDRESSES {
+        UUID address_id PK
+        UUID user_id FK
+        string address_line
+        string city
+        float latitude
+        float longitude
+    }
+
+    %% ---------------------------------------------------------
+    %% 4. JOBS & EXECUTION (3 Tables)
+    %% ---------------------------------------------------------
+    JOBS {
+        UUID job_id PK
+        UUID user_id FK
+        int skill_id FK
+        UUID address_id FK
+        string job_status
+        float final_price
+        timestamp scheduled_at
+    }
+
+    JOB_ASSIGNMENTS {
+        UUID job_id PK, FK
+        UUID worker_id FK
+        string assignment_status
+        timestamp accepted_at
+        timestamp completed_at
+    }
+
+    JOB_STATUS_HISTORY {
+        int history_id PK
+        UUID job_id FK
+        string old_status
+        string new_status
+        UUID changed_by FK
+    }
+
+    %% ---------------------------------------------------------
+    %% 5. FINANCE (4 Tables)
+    %% ---------------------------------------------------------
+    WALLETS {
+        UUID user_id PK, FK
+        float current_balance
+        string currency
+        timestamp last_updated_at
+    }
+
+    TRANSACTIONS {
+        UUID transaction_id PK
+        UUID job_id FK
+        UUID from_user_id FK
+        UUID to_user_id FK
+        float amount
+        string transaction_status
+    }
+
+    PLATFORM_COMMISSIONS {
+        UUID job_id PK, FK
+        float commission_percentage
+        float commission_amount
+    }
+
+    PAYMENT_DISPUTES {
+        UUID id PK
+        UUID booking_id FK
+        UUID raised_by FK
+        numeric amount_disputed
+        string status
+    }
+
+    %% ---------------------------------------------------------
+    %% 6. FEEDBACK & MODERATION (6 Tables)
+    %% ---------------------------------------------------------
+    RATINGS {
+        UUID rating_id PK
+        UUID job_id FK
+        UUID from_user_id FK
+        UUID to_user_id FK
+        int rating_value
+        text review_text
+    }
+
+    REPORTS {
+        UUID id PK
+        UUID reporter_id FK
+        string report_type
+        text description
+        string status
+    }
+
+    BANNED_ENTITIES {
+        UUID id PK
+        UUID entity_id FK
+        string entity_type
+        string reason
+        boolean is_active
+    }
+
+    ADMIN_ACTIONS {
+        UUID admin_action_id PK
+        UUID admin_user_id FK
+        string action_type
+        string target_entity_type
+    }
+
+    AUDIT_LOGS {
+        UUID id PK
+        UUID admin_id FK
+        string action_type
+        string target_type
+        text description
+    }
+
+    ADMIN_NOTIFICATIONS {
+        UUID id PK
+        string title
+        string priority
+        boolean is_read
+    }
+
+    %% ---------------------------------------------------------
+    %% 7. SYSTEM (2 Tables)
+    %% ---------------------------------------------------------
+    SYSTEM_SETTINGS {
+        string key PK
+        jsonb value
+        boolean is_public
+    }
+
+    DAILY_STATISTICS {
+        UUID id PK
+        date date
+        int total_bookings
+        numeric total_revenue
+    }
+
+    %% ---------------------------------------------------------
+    %% RELATIONSHIPS
+    %% ---------------------------------------------------------
+    
+    USERS ||--o{ USER_ROLES : has
+    ROLES ||--o{ USER_ROLES : defined_as
+    USERS ||--o{ USER_PROFILES : has_details
+    USERS ||--o| WORKER_PROFILES : is_worker
+    USERS ||--o{ ADDRESSES : owns
+    USERS ||--o{ ADMINS : auth_link
+    USERS ||--o| WALLETS : owns
+
+    WORKER_PROFILES ||--o{ WORKER_CATEGORIES : offers
+    CATEGORIES ||--o{ WORKER_CATEGORIES : categorized
+
+    JOBS ||--o{ JOB_ASSIGNMENTS : assigned
+    WORKER_PROFILES ||--o{ JOB_ASSIGNMENTS : accepts
+    JOBS ||--o{ JOB_STATUS_HISTORY : tracks used
+    JOBS ||--o{ PLATFORM_COMMISSIONS : generates
+
+    TRANSACTIONS ||--o{ JOBS : payment_for
+    PAYMENT_DISPUTES ||--o{ JOBS : disputes
+
+    ADMINS ||--o{ VERIFICATION_REQUESTS : reviews
+    ADMINS ||--o{ AUDIT_LOGS : logs
+    
+    USERS ||--o{ RATINGS : reviews
+    USERS ||--o{ REPORTS : creates
+    
