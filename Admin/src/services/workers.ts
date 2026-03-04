@@ -1,97 +1,96 @@
-import { supabase } from '@/integrations/supabase/client';
-import type { Tables } from '@/integrations/supabase/types';
+/**
+ * src/services/workers.ts
+ * Connects to Django /api/v1/accounts/worker_profiles/
+ * Field mapping:
+ *   Supabase 'workers' view   → Django 'worker_profiles' endpoint
+ *   Supabase 'status'         → Django 'worker_status' (aliased as 'status' by serializer)
+ *   Supabase 'verification_status' → Django 'verification_status' (mapped from worker_status)
+ *   Supabase 'verification_documents' → Django 'verification_requests' endpoint
+ */
+import { api } from '@/api';
 
-export type Worker = Tables<'workers'>;
-export type VerificationDocument = Tables<'verification_documents'>;
+export interface Worker {
+  user_id: string;          // PK — was 'id' in Supabase workers view
+  phone: string;
+  email: string | null;
+  name: string;
+  status: string;           // aliased from worker_status
+  worker_status: string;
+  verification_status: string;
+  government_id_type: string;
+  government_id_number: string | null;
+  experience_years: number;
+  bio: string;
+  average_rating: string;
+  total_jobs_completed: number;
+  is_available: boolean;
+  is_deleted: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Unwrap Django paginated response → plain array */
+const unwrap = (data: any): any[] => data?.results ?? (Array.isArray(data) ? data : []);
 
 export const workersService = {
   async getAll(): Promise<Worker[]> {
-    const { data, error } = await supabase
-      .from('workers')
-      .select('*')
-      .order('created_at', { ascending: false });
+    const { data } = await api.get('/accounts/worker_profiles/');
+    return unwrap(data);
+  },
 
-    if (error) throw error;
+  async getById(id: string): Promise<Worker | null> {
+    const { data } = await api.get(`/accounts/worker_profiles/${id}/`);
     return data;
   },
 
-  async getById(id: string) {
-    const { data, error } = await supabase
-      .from('workers')
-      .select(`*, verification_documents(*), worker_categories(id, category_id, is_primary, years_experience, categories(id, name))`)
-      .eq('id', id)
-      .maybeSingle();
-
-    if (error) throw error;
-    return data;
-  },
-
-  async getPendingApprovals() {
-    const { data, error } = await supabase
-      .from('workers')
-      .select(`*, verification_documents(*), worker_categories(id, category_id, is_primary, years_experience, categories(id, name))`)
-      .eq('verification_status', 'pending')
-      .order('created_at', { ascending: true });
-
-    if (error) throw error;
-    return data;
+  async getPendingApprovals(): Promise<Worker[]> {
+    const { data } = await api.get('/accounts/worker_profiles/', {
+      params: { worker_status: 'pending' },
+    });
+    return unwrap(data);
   },
 
   async approveWorker(id: string, adminNotes?: string): Promise<void> {
-    const { error } = await supabase
-      .from('workers')
-      .update({ verification_status: 'approved', is_verified: true, verified_at: new Date().toISOString() })
-      .eq('id', id);
-
-    if (error) throw error;
-
-    await supabase
-      .from('verification_documents')
-      .update({ verification_status: 'approved', verified_at: new Date().toISOString(), admin_notes: adminNotes })
-      .eq('worker_id', id)
-      .eq('verification_status', 'pending');
+    await api.post(`/accounts/worker_profiles/${id}/approve/`, { admin_notes: adminNotes });
+    // Update the most recent pending verification request
+    const { data: vrs } = await api.get('/accounts/verification_requests/', {
+      params: { worker: id, status: 'pending' },
+    });
+    const pending = (vrs?.results ?? vrs ?? [])[0];
+    if (pending) {
+      await api.patch(`/accounts/verification_requests/${pending.id}/`, {
+        status: 'approved',
+        admin_notes: adminNotes,
+        reviewed_at: new Date().toISOString(),
+      });
+    }
   },
 
   async rejectWorker(id: string, reason: string): Promise<void> {
-    const { error } = await supabase
-      .from('workers')
-      .update({ verification_status: 'rejected', is_verified: false })
-      .eq('id', id);
-
-    if (error) throw error;
-
-    await supabase
-      .from('verification_documents')
-      .update({ verification_status: 'rejected', rejection_reason: reason })
-      .eq('worker_id', id)
-      .eq('verification_status', 'pending');
+    await api.post(`/accounts/worker_profiles/${id}/reject/`, { reason });
   },
 
   async suspendWorker(id: string): Promise<void> {
-    const { error } = await supabase.from('workers').update({ status: 'suspended' }).eq('id', id);
-    if (error) throw error;
+    await api.post(`/accounts/worker_profiles/${id}/suspend/`);
   },
 
   async banWorker(id: string): Promise<void> {
-    const { error } = await supabase.from('workers').update({ status: 'banned' }).eq('id', id);
-    if (error) throw error;
+    await api.post(`/accounts/worker_profiles/${id}/ban/`);
   },
 
   async activateWorker(id: string): Promise<void> {
-    const { error } = await supabase.from('workers').update({ status: 'active' }).eq('id', id);
-    if (error) throw error;
+    // Activate = approve the worker
+    await api.post(`/accounts/worker_profiles/${id}/approve/`);
   },
 
   async getStats() {
-    const { data, error } = await supabase.from('workers').select('status, verification_status, is_verified');
-    if (error) throw error;
-
+    const workers = await workersService.getAll();
     return {
-      total: data.length,
-      active: data.filter(w => w.status === 'active').length,
-      verified: data.filter(w => w.is_verified).length,
-      pending: data.filter(w => w.verification_status === 'pending').length,
-      suspended: data.filter(w => w.status === 'suspended').length,
+      total: workers.length,
+      active: workers.filter(w => w.status === 'active').length,
+      verified: workers.filter(w => w.verification_status === 'approved').length,
+      pending: workers.filter(w => w.worker_status === 'pending').length,
+      suspended: workers.filter(w => w.status === 'suspended').length,
     };
   },
 };

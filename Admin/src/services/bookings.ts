@@ -1,109 +1,145 @@
-import { supabase } from '@/integrations/supabase/client';
-import type { Tables } from '@/integrations/supabase/types';
+/**
+ * src/services/bookings.ts
+ * Connects to Django:
+ *   bookings   → /api/v1/marketplace/jobs/
+ *   payments   → /api/v1/finance/transactions/
+ *   reports    → /api/v1/moderation/reports/
+ *
+ * Field mapping:
+ *   booking_status   → job_status (also exposed as booking_status alias by serializer)
+ *   category_name    → category_name (computed field in serializer)
+ */
+import { api } from '@/api';
 
-export type Booking = Tables<'bookings'>;
-export type Payment = Tables<'payments'>;
-export type Report = Tables<'reports'>;
+export interface Booking {
+  id: string;
+  user: string;
+  user_phone: string;
+  user_name: string;
+  category: number;
+  category_name: string;
+  address: string | null;
+  address_label: string;
+  job_status: string;
+  booking_status: string;   // alias for job_status
+  final_price: string | null;
+  description: string;
+  scheduled_at: string | null;
+  cancellation_reason: string;
+  is_deleted: boolean;
+  created_at: string;
+  updated_at: string;
+}
 
+export interface Payment {
+  id: string;               // transaction_id in DB
+  job: string | null;
+  from_user: string | null;
+  from_user_phone: string;
+  to_user: string | null;
+  to_user_phone: string;
+  transaction_type: string;
+  amount: string;
+  currency: string;
+  status: string;           // alias for transaction_status
+  transaction_status: string;
+  payment_method: string;
+  gateway_reference: string;
+  created_at: string;
+}
+
+export interface Report {
+  id: string;
+  reporter: string;
+  reporter_phone: string;
+  target_entity_type: string;
+  target_entity_id: string | null;
+  report_type: string;
+  description: string;
+  status: string;
+  admin_notes: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Unwrap DRF paginated response */
+const unwrap = (data: any): any[] => data?.results ?? (Array.isArray(data) ? data : []);
+
+// ─── Bookings (= Django Jobs) ─────────────────────────────────────────────────
 export const bookingsService = {
-  async getAll() {
-    const { data, error } = await supabase
-      .from('bookings')
-      .select(`*, users(id, name, phone, email), workers(id, name, phone, email), categories(id, name, icon)`)
-      .order('created_at', { ascending: false });
-    if (error) throw error;
+  async getAll(): Promise<Booking[]> {
+    const { data } = await api.get('/marketplace/jobs/');
+    return unwrap(data);
+  },
+
+  async getById(id: string): Promise<Booking | null> {
+    const { data } = await api.get(`/marketplace/jobs/${id}/`);
     return data;
   },
 
-  async getById(id: string) {
-    const { data, error } = await supabase
-      .from('bookings')
-      .select(`*, users(id, name, phone, email), workers(id, name, phone, email), categories(id, name, icon)`)
-      .eq('id', id)
-      .maybeSingle();
-    if (error) throw error;
-    return data;
+  async getByStatus(status: string): Promise<Booking[]> {
+    const { data } = await api.get('/marketplace/jobs/', {
+      params: { booking_status: status },
+    });
+    return unwrap(data);
   },
 
-  async getByStatus(status: string) {
-    const { data, error } = await supabase
-      .from('bookings')
-      .select(`*, users(id, name, phone, email), workers(id, name, phone, email), categories(id, name, icon)`)
-      .eq('booking_status', status)
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    return data;
-  },
-
-  async updateStatus(id: string, status: string): Promise<void> {
-    const updates: Record<string, string> = { booking_status: status };
-    if (status === 'accepted') updates.accepted_at = new Date().toISOString();
-    else if (status === 'in_progress') updates.started_at = new Date().toISOString();
-    else if (status === 'completed') updates.completed_at = new Date().toISOString();
-    else if (status === 'cancelled') updates.cancelled_at = new Date().toISOString();
-
-    const { error } = await supabase.from('bookings').update(updates).eq('id', id);
-    if (error) throw error;
+  async updateStatus(id: string, status: string, reason?: string): Promise<void> {
+    await api.post(`/marketplace/jobs/${id}/update_status/`, { status, reason });
   },
 
   async getStats() {
-    const { data, error } = await supabase.from('bookings').select('booking_status');
-    if (error) throw error;
+    const bookings = await bookingsService.getAll();
     return {
-      total: data.length,
-      pending: data.filter(b => b.booking_status === 'pending').length,
-      active: data.filter(b => ['accepted', 'in_progress'].includes(b.booking_status)).length,
-      completed: data.filter(b => b.booking_status === 'completed').length,
-      cancelled: data.filter(b => b.booking_status === 'cancelled').length,
+      total: bookings.length,
+      pending: bookings.filter(b => b.job_status === 'pending').length,
+      active: bookings.filter(b => ['accepted', 'in_progress'].includes(b.job_status)).length,
+      completed: bookings.filter(b => b.job_status === 'completed').length,
+      cancelled: bookings.filter(b => b.job_status === 'cancelled').length,
     };
   },
 };
 
+// ─── Payments (= Django Transactions) ────────────────────────────────────────
 export const paymentsService = {
-  async getAll() {
-    const { data, error } = await supabase
-      .from('payments')
-      .select(`*, users(id, name, phone, email), workers(id, name, phone, email), bookings(id, category_name, booking_status)`)
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    return data;
+  async getAll(): Promise<Payment[]> {
+    const { data } = await api.get('/finance/transactions/');
+    return unwrap(data);
   },
 
   async getStats() {
-    const { data, error } = await supabase.from('payments').select('status, amount, refund_amount');
-    if (error) throw error;
-    const completed = data.filter(p => p.status === 'success');
-    const pending = data.filter(p => p.status === 'pending');
-    const refunded = data.filter(p => p.status === 'refunded');
+    const payments = await paymentsService.getAll();
+    const success = payments.filter(p => p.transaction_status === 'success');
+    const pending = payments.filter(p => p.transaction_status === 'pending');
+    const refunded = payments.filter(p => p.transaction_type === 'refund');
     return {
-      total: data.length,
-      totalAmount: data.reduce((sum, p) => sum + Number(p.amount), 0),
-      completed: completed.length,
-      completedAmount: completed.reduce((sum, p) => sum + Number(p.amount), 0),
+      total: payments.length,
+      totalAmount: payments.reduce((s, p) => s + Number(p.amount), 0),
+      completed: success.length,
+      completedAmount: success.reduce((s, p) => s + Number(p.amount), 0),
       pending: pending.length,
-      pendingAmount: pending.reduce((sum, p) => sum + Number(p.amount), 0),
+      pendingAmount: pending.reduce((s, p) => s + Number(p.amount), 0),
       refunded: refunded.length,
-      refundedAmount: refunded.reduce((sum, p) => sum + Number(p.refund_amount || 0), 0),
+      refundedAmount: refunded.reduce((s, p) => s + Number(p.amount), 0),
     };
   },
 };
 
+// ─── Reports ──────────────────────────────────────────────────────────────────
 export const reportsService = {
-  async getAll() {
-    const { data, error } = await supabase.from('reports').select('*').order('created_at', { ascending: false });
-    if (error) throw error;
-    return data;
+  async getAll(): Promise<Report[]> {
+    const { data } = await api.get('/moderation/reports/');
+    return unwrap(data);
   },
 
   async getStats() {
-    const { data, error } = await supabase.from('reports').select('status');
-    if (error) throw error;
+    const reports = await reportsService.getAll();
     return {
-      total: data.length,
-      open: data.filter(r => r.status === 'open').length,
-      underReview: data.filter(r => r.status === 'under_review').length,
-      resolved: data.filter(r => r.status === 'resolved').length,
-      dismissed: data.filter(r => r.status === 'dismissed').length,
+      total: reports.length,
+      open: reports.filter(r => r.status === 'open').length,
+      underReview: reports.filter(r => r.status === 'in_review').length,
+      resolved: reports.filter(r => r.status === 'resolved').length,
+      dismissed: reports.filter(r => r.status === 'dismissed').length,
     };
   },
 };

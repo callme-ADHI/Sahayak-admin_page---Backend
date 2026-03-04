@@ -1,52 +1,20 @@
+/**
+ * src/hooks/useDashboardStats.ts
+ * Replaced all supabase calls with Django API via analyticsService.
+ * Growth data now uses /core/daily_statistics/?days=N
+ * Recent activity from /moderation/audit_logs/
+ */
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/api';
+import { analyticsService } from '@/services/analytics';
+
+const unwrap = (data: any): any[] => data?.results ?? (Array.isArray(data) ? data : []);
 
 export const useDashboardStats = () => {
   return useQuery({
     queryKey: ['dashboard-stats'],
-    queryFn: async () => {
-      const fetchTable = async (table: string, select = 'id, status'): Promise<any[]> => {
-        // Strict Data Check: If using placeholder URL, return empty to prevent "ghost" data
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-        if (!supabaseUrl || supabaseUrl.includes('placeholder')) {
-          return [];
-        }
-
-        // @ts-ignore - Supabase types are strict about table names
-        const { data, error } = await supabase.from(table).select(select);
-        if (error) {
-          console.warn(`Failed to fetch ${table}:`, error);
-          return [];
-        }
-        return data || [];
-      };
-
-      const [workers, users, bookings, payments, reports, verifications] = await Promise.all([
-        fetchTable('workers', 'id, verification_status, is_available'),
-        fetchTable('users', 'id, status'),
-        fetchTable('bookings', 'id, booking_status, payment_status'),
-        fetchTable('payments', 'id, status'),
-        fetchTable('reports', 'id, status'),
-        fetchTable('verification_requests', 'id, status'),
-      ]);
-
-      // usage of simplified variables directly
-
-
-      return {
-        totalWorkers: workers.length,
-        totalUsers: users.length,
-        activeWorks: bookings.filter(b => ['pending', 'accepted', 'in_progress'].includes(b.booking_status)).length,
-        pendingRequests: bookings.filter(b => b.booking_status === 'pending').length,
-        cancelledWorks: bookings.filter(b => b.booking_status === 'cancelled').length,
-        completedWorks: bookings.filter(b => b.booking_status === 'completed').length,
-        paymentIssues: payments.filter(p => p.status === 'failed').length,
-        pendingApprovals: verifications.filter(v => v.status === 'pending').length,
-        activeWorkers: workers.filter(w => w.is_available).length,
-        activeUsers: users.filter(u => u.status === 'active').length,
-        openReports: reports.filter(r => r.status === 'open').length,
-      };
-    },
+    queryFn: () => analyticsService.getDashboardStats(),
+    retry: 1,
   });
 };
 
@@ -54,18 +22,9 @@ export const useGrowthData = (days: number = 365) => {
   return useQuery({
     queryKey: ['growth-data', days],
     queryFn: async () => {
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - days);
-
-      const { data, error } = await supabase
-        .from('daily_statistics')
-        .select('*')
-        .gte('date', startDate.toISOString())
-        .order('date', { ascending: true });
-      if (error) throw error;
-      return (data || []).map(d => {
+      const { data } = await api.get('/core/daily_statistics/', { params: { days } });
+      return unwrap(data).map((d: any) => {
         const date = new Date(d.date);
-        // For < 90 days, show Day Month (e.g., 12 Dec), else show Month Year (e.g., Dec 2024)
         const label = days <= 90
           ? date.toLocaleDateString('en-US', { day: 'numeric', month: 'short' })
           : date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
@@ -75,33 +34,21 @@ export const useGrowthData = (days: number = 365) => {
           workers: d.new_workers || 0,
           users: d.new_users || 0,
           works: d.total_bookings || 0,
-          revenue: d.total_revenue || 0,
-          payouts: d.worker_earnings || 0,
+          revenue: Number(d.total_revenue) || 0,
+          // worker_earnings is aliased from total_payouts by DailyStatisticSerializer
+          payouts: Number(d.worker_earnings ?? d.total_payouts) || 0,
         };
       });
     },
+    retry: 1,
   });
 };
 
 export const useCategoryVolume = () => {
   return useQuery({
     queryKey: ['category-volume'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('bookings')
-        .select('category_name');
-      if (error) throw error;
-
-      const volumeMap: Record<string, number> = {};
-      (data || []).forEach(b => {
-        volumeMap[b.category_name] = (volumeMap[b.category_name] || 0) + 1;
-      });
-
-      return Object.entries(volumeMap).map(([category, count]) => ({
-        category,
-        count,
-      }));
-    },
+    queryFn: () => analyticsService.getCategoryVolume(),
+    retry: 1,
   });
 };
 
@@ -109,21 +56,17 @@ export const useRecentActivity = () => {
   return useQuery({
     queryKey: ['recent-activity'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('audit_logs')
-        .select('*, admins(name)')
-        .order('created_at', { ascending: false })
-        .limit(10);
-      if (error) throw error;
-
-      return (data || []).map(log => ({
+      const { data } = await api.get('/moderation/audit_logs/');
+      const logs = unwrap(data).slice(0, 10);
+      return logs.map((log: any) => ({
         id: log.id,
         action: log.description,
-        user: log.admins?.name || 'System',
+        user: log.admin_name || 'System',   // admin_name computed by AuditLogSerializer
         time: getRelativeTime(log.created_at),
         type: log.action_type,
       }));
     },
+    retry: 1,
   });
 };
 

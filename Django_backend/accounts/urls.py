@@ -11,12 +11,12 @@ from .views import *
 router = DefaultRouter()
 
 
-router.register(r'users', UserViewSet)
-router.register(r'user_profiles', UserProfileViewSet)
-router.register(r'roles', RoleViewSet)
-router.register(r'user_roles', UserRoleViewSet)
-router.register(r'worker_profiles', WorkerProfileViewSet)
-router.register(r'verification_requests', VerificationRequestViewSet)
+router.register(r'users',                 UserViewSet,                basename='users')
+router.register(r'user_profiles',          UserProfileViewSet,         basename='user-profiles')
+router.register(r'roles',                  RoleViewSet,                basename='roles')
+router.register(r'user_roles',             UserRoleViewSet,            basename='user-roles')
+router.register(r'worker_profiles',        WorkerProfileViewSet,       basename='worker-profiles')
+router.register(r'verification_requests',  VerificationRequestViewSet, basename='verification-requests')
 
 urlpatterns = [
     path("", include(router.urls)),

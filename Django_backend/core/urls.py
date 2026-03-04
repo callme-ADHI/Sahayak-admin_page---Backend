@@ -1,20 +1,15 @@
 """
-core/urls.py
-Auto-generated URL routing for core API.
+core/urls.py — Corrected URL routing for core API.
 """
-
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import *
-
+from .views import SystemSettingViewSet, AdminNotificationViewSet, DailyStatisticViewSet
 
 router = DefaultRouter()
-
-
-router.register(r'system_settings', SystemSettingViewSet)
-router.register(r'admin_notifications', AdminNotificationViewSet)
-router.register(r'daily_statistics', DailyStatisticViewSet)
+router.register(r'system_settings',      SystemSettingViewSet)
+router.register(r'admin_notifications',  AdminNotificationViewSet, basename='admin_notifications')
+router.register(r'daily_statistics',     DailyStatisticViewSet,    basename='daily-statistics')
 
 urlpatterns = [
-    path("", include(router.urls)),
+    path('', include(router.urls)),
 ]

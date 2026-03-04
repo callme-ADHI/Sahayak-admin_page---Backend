@@ -1,45 +1,63 @@
-import { supabase } from '@/integrations/supabase/client';
-import type { Tables } from '@/integrations/supabase/types';
+/**
+ * src/services/users.ts
+ * Connects to Django /api/v1/accounts/users/
+ * Field name changes:
+ *   Supabase 'status'        → Django 'account_status' (aliased as 'status' by serializer)
+ *   Supabase PATCH {status}  → Django POST /users/{id}/suspend|ban|activate/
+ */
+import { api } from '@/api';
 
-export type User = Tables<'users'>;
-export type Address = Tables<'addresses'>;
+export interface User {
+  id: string;
+  phone: string;
+  email: string | null;
+  name: string;
+  status: string;           // aliased from account_status
+  account_status: string;
+  is_verified: boolean;
+  is_active: boolean;
+  is_staff: boolean;
+  is_superuser: boolean;
+  is_deleted: boolean;
+  deleted_at: string | null;
+  date_joined: string;      // was created_at
+  updated_at: string;
+  last_login: string | null;
+}
+
+/** Unwrap Django paginated response → plain array */
+const unwrap = (data: any): any[] => data?.results ?? (Array.isArray(data) ? data : []);
 
 export const usersService = {
   async getAll(): Promise<User[]> {
-    const { data, error } = await supabase.from('users').select('*').order('created_at', { ascending: false });
-    if (error) throw error;
-    return data;
+    const { data } = await api.get('/accounts/users/');
+    return unwrap(data);
   },
 
-  async getById(id: string) {
-    const { data, error } = await supabase.from('users').select(`*, addresses(*)`).eq('id', id).maybeSingle();
-    if (error) throw error;
+  async getById(id: string): Promise<User | null> {
+    const { data } = await api.get(`/accounts/users/${id}/`);
     return data;
   },
 
   async suspendUser(id: string): Promise<void> {
-    const { error } = await supabase.from('users').update({ status: 'suspended' }).eq('id', id);
-    if (error) throw error;
+    await api.post(`/accounts/users/${id}/suspend/`);
   },
 
   async banUser(id: string): Promise<void> {
-    const { error } = await supabase.from('users').update({ status: 'banned' }).eq('id', id);
-    if (error) throw error;
+    await api.post(`/accounts/users/${id}/ban/`);
   },
 
   async activateUser(id: string): Promise<void> {
-    const { error } = await supabase.from('users').update({ status: 'active' }).eq('id', id);
-    if (error) throw error;
+    await api.post(`/accounts/users/${id}/activate/`);
   },
 
   async getStats() {
-    const { data, error } = await supabase.from('users').select('status');
-    if (error) throw error;
+    const users = await usersService.getAll();
     return {
-      total: data.length,
-      active: data.filter(u => u.status === 'active').length,
-      suspended: data.filter(u => u.status === 'suspended').length,
-      banned: data.filter(u => u.status === 'banned').length,
+      total: users.length,
+      active: users.filter(u => u.status === 'active').length,
+      suspended: users.filter(u => u.status === 'suspended').length,
+      banned: users.filter(u => u.status === 'banned').length,
     };
   },
 };
