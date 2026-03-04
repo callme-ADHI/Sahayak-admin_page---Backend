@@ -41,11 +41,11 @@ urlpatterns = [
          name="token_verify"),
 
     # ── App API Routes (to be implemented per app) ──────────────────────────
-    # path("api/v1/accounts/",    include("accounts.urls")),
-    # path("api/v1/marketplace/", include("marketplace.urls")),
-    # path("api/v1/finance/",     include("finance.urls")),
-    # path("api/v1/moderation/",  include("moderation.urls")),
-    # path("api/v1/core/",        include("core.urls")),
+    path("api/v1/accounts/",    include("accounts.urls")),
+    path("api/v1/marketplace/", include("marketplace.urls")),
+    path("api/v1/finance/",     include("finance.urls")),
+    path("api/v1/moderation/",  include("moderation.urls")),
+    path("api/v1/core/",        include("core.urls")),
 ]
 
 # ── Serve Media Files in Development ──────────────────────────────────────
