@@ -1,0 +1,349 @@
+erDiagram
+    %% ==========================================================
+    %% JOB KARO – DJANGO BACKEND ENTITY-RELATIONSHIP DIAGRAM
+    %% Version: 2.0.0 (Django Edition)
+    %% ==========================================================
+
+    %% ─── App: accounts ─────────────────────────────────────────
+    USERS {
+        UUID id PK
+        string phone UK
+        string email UK
+        string password
+        string account_status
+        boolean is_verified
+        boolean is_staff
+        boolean is_superuser
+        boolean is_active
+        boolean is_deleted
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    USER_PROFILES {
+        UUID user_id PK-FK
+        string full_name
+        string gender
+        string profile_photo_url
+        date date_of_birth
+        string language_preference
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    ROLES {
+        int id PK
+        string role_name UK
+        string description
+        timestamp created_at
+    }
+
+    USER_ROLES {
+        bigint id PK
+        UUID user_id FK
+        int role_id FK
+        boolean is_active
+        timestamp assigned_at
+    }
+
+    WORKER_PROFILES {
+        UUID user_id PK-FK
+        string worker_status
+        string government_id_number UK
+        int experience_years
+        string bio
+        decimal average_rating
+        int total_jobs_completed
+        boolean is_available
+        boolean is_deleted
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    VERIFICATION_REQUESTS {
+        UUID id PK
+        UUID worker_id FK
+        string request_type
+        string status
+        json documents_submitted
+        UUID reviewed_by FK
+        timestamp reviewed_at
+        string rejection_reason
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    %% ─── App: marketplace ──────────────────────────────────────
+    CATEGORIES {
+        int id PK
+        string name UK
+        string description
+        string icon
+        decimal base_rate
+        boolean is_active
+        int display_order
+        boolean is_deleted
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    WORKER_CATEGORIES {
+        UUID id PK
+        UUID worker_id FK
+        int category_id FK
+        boolean is_primary
+        decimal rate_override
+        int years_experience
+        timestamp created_at
+    }
+
+    ADDRESSES {
+        UUID address_id PK
+        UUID user_id FK
+        string label
+        string address_line
+        string city
+        string state
+        string pincode
+        decimal latitude
+        decimal longitude
+        boolean is_default
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    JOBS {
+        UUID job_id PK
+        UUID user_id FK
+        int skill_id FK
+        UUID address_id FK
+        string job_status
+        decimal final_price
+        string description
+        timestamp scheduled_at
+        string cancellation_reason
+        boolean is_deleted
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    JOB_ASSIGNMENTS {
+        UUID id PK
+        UUID job_id FK
+        UUID worker_id FK
+        string assignment_status
+        timestamp accepted_at
+        timestamp started_at
+        timestamp completed_at
+        timestamp cancelled_at
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    JOB_STATUS_HISTORY {
+        bigint id PK
+        UUID job_id FK
+        string old_status
+        string new_status
+        UUID changed_by FK
+        string reason
+        timestamp created_at
+    }
+
+    %% ─── App: finance ──────────────────────────────────────────
+    WALLETS {
+        UUID user_id PK-FK
+        decimal current_balance
+        string currency
+        boolean is_frozen
+        timestamp last_updated_at
+        timestamp created_at
+    }
+
+    TRANSACTIONS {
+        UUID transaction_id PK
+        UUID job_id FK
+        UUID from_user_id FK
+        UUID to_user_id FK
+        string transaction_type
+        decimal amount
+        string currency
+        string transaction_status
+        string payment_method
+        string gateway_reference
+        json metadata
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    PLATFORM_COMMISSIONS {
+        UUID job_id PK-FK
+        decimal commission_percentage
+        decimal commission_amount
+        boolean is_settled
+        timestamp settled_at
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    PAYMENT_DISPUTES {
+        UUID id PK
+        UUID booking_id FK
+        UUID raised_by FK
+        string raised_by_type
+        string dispute_type
+        decimal amount_disputed
+        string description
+        json evidence_urls
+        string status
+        string resolution
+        decimal refund_amount
+        UUID assigned_to FK
+        UUID resolved_by FK
+        timestamp resolved_at
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    RATINGS {
+        UUID rating_id PK
+        UUID job_id FK
+        UUID from_user_id FK
+        UUID to_user_id FK
+        int rating_value
+        text review_text
+        string rating_type
+        timestamp created_at
+    }
+
+    %% ─── App: moderation ───────────────────────────────────────
+    REPORTS {
+        UUID id PK
+        UUID reporter_id FK
+        string target_entity_type
+        UUID target_entity_id
+        string report_type
+        text description
+        string status
+        text admin_notes
+        UUID resolved_by FK
+        timestamp resolved_at
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    BANNED_ENTITIES {
+        UUID id PK
+        UUID entity_id
+        string entity_type
+        text reason
+        boolean is_active
+        UUID banned_by FK
+        timestamp expires_at
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    ADMIN_ACTIONS {
+        UUID admin_action_id PK
+        UUID admin_user_id FK
+        string action_type
+        string target_entity_type
+        UUID target_entity_id
+        text description
+        json metadata
+        timestamp created_at
+    }
+
+    AUDIT_LOGS {
+        UUID id PK
+        UUID admin_id FK
+        string action_type
+        string target_type
+        UUID target_id
+        text description
+        string ip_address
+        text user_agent
+        json before_data
+        json after_data
+        timestamp created_at
+    }
+
+    %% ─── App: core ─────────────────────────────────────────────
+    SYSTEM_SETTINGS {
+        text key PK
+        json value
+        text description
+        string category
+        boolean is_public
+        boolean is_editable
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    ADMIN_NOTIFICATIONS {
+        UUID id PK
+        UUID recipient_id FK
+        string title
+        text body
+        string notification_type
+        string priority
+        json data
+        boolean is_read
+        timestamp read_at
+        timestamp created_at
+    }
+
+    DAILY_STATISTICS {
+        UUID id PK
+        date date UK
+        int total_bookings
+        int completed_bookings
+        int cancelled_bookings
+        decimal total_revenue
+        decimal total_payouts
+        decimal platform_earnings
+        int new_users
+        int new_workers
+        int active_workers
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    %% ─── RELATIONSHIPS ──────────────────────────────────────────
+
+    USERS ||--o| USER_PROFILES : "has profile"
+    USERS ||--o{ USER_ROLES : "assigned roles"
+    ROLES ||--o{ USER_ROLES : "defines"
+    USERS ||--o| WORKER_PROFILES : "can be worker"
+    USERS ||--o{ ADDRESSES : "owns"
+    USERS ||--o| WALLETS : "has wallet"
+    USERS ||--o{ JOBS : "creates"
+    USERS ||--o{ TRANSACTIONS : "sends"
+    USERS ||--o{ TRANSACTIONS : "receives"
+    USERS ||--o{ RATINGS : "gives"
+    USERS ||--o{ RATINGS : "receives"
+    USERS ||--o{ REPORTS : "files"
+
+    WORKER_PROFILES ||--o{ WORKER_CATEGORIES : "offers services"
+    WORKER_PROFILES ||--o{ JOB_ASSIGNMENTS : "accepts jobs"
+    WORKER_PROFILES ||--o{ VERIFICATION_REQUESTS : "submits docs"
+
+    CATEGORIES ||--o{ WORKER_CATEGORIES : "categorizes workers"
+    CATEGORIES ||--o{ JOBS : "service type"
+
+    JOBS ||--o{ JOB_ASSIGNMENTS : "assigned to"
+    JOBS ||--o{ JOB_STATUS_HISTORY : "has timeline"
+    JOBS ||--o{ TRANSACTIONS : "generates payment"
+    JOBS ||--o| PLATFORM_COMMISSIONS : "earns commission"
+    JOBS ||--o{ PAYMENT_DISPUTES : "may dispute"
+    JOBS ||--o{ RATINGS : "rated after"
+    ADDRESSES ||--o{ JOBS : "location for"
+
+    USERS ||--o{ AUDIT_LOGS : "logged by"
+    USERS ||--o{ ADMIN_ACTIONS : "performed by"
+    USERS ||--o{ BANNED_ENTITIES : "bans issued by"
+    USERS ||--o{ VERIFICATION_REQUESTS : "reviewed by"
+    USERS ||--o{ ADMIN_NOTIFICATIONS : "notified"
+    USERS ||--o{ PAYMENT_DISPUTES : "raises"
+    USERS ||--o{ PAYMENT_DISPUTES : "resolves"

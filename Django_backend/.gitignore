@@ -1,0 +1,42 @@
+# ── Python ─────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+
+# ── Virtual Environment (NEVER commit this) ─────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ── Django ──────────────────────────────────────────────
+*.log
+*.pot
+db.sqlite3          # dev database
+db.sqlite3-journal
+media/              # user uploads
+staticfiles/        # collected static
+
+# ── Environment Secrets (NEVER commit real .env) ────────
+.env
+# .env.example is safe to commit (it has no real secrets)
+
+# ── OS / Editor ─────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Coverage / Testing ──────────────────────────────────
+.coverage
+htmlcov/
+.pytest_cache/

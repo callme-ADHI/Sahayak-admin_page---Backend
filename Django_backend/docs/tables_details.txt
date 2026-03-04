@@ -1,0 +1,874 @@
+================================================================================
+JOB KARO – DJANGO BACKEND DATABASE DOCUMENTATION
+================================================================================
+Version        : 2.0.0 (Django Edition)
+Date           : 2026-03-04
+Framework      : Django 6.0 + Django REST Framework
+Database       : PostgreSQL (production) / SQLite (development)
+ORM            : Django ORM (replaces Supabase PostgREST)
+Auth           : JWT via djangorestframework-simplejwt
+Migration Tool : Django Migrations (replaces raw SQL scripts)
+
+This document is the complete, authoritative reference for the Job Karo
+Django backend database schema. It covers all tables, columns, types,
+constraints, indexes, and architectural decisions.
+
+================================================================================
+SECTION 1: APP-LEVEL MODULARIZATION
+================================================================================
+
+The schema is split into 5 Django apps. Each app owns a logical domain:
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │  App           │  Domain                   │  Tables                     │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │  accounts      │  Identity & Access        │  users, user_profiles,      │
+  │                │                           │  roles, user_roles,         │
+  │                │                           │  worker_profiles,           │
+  │                │                           │  verification_requests      │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │  marketplace   │  Service Delivery         │  categories, addresses,     │
+  │                │                           │  jobs, job_assignments,     │
+  │                │                           │  job_status_history,        │
+  │                │                           │  worker_categories          │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │  finance       │  Money & Payments         │  wallets, transactions,     │
+  │                │                           │  platform_commissions,      │
+  │                │                           │  payment_disputes, ratings  │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │  moderation    │  Trust & Safety           │  reports, banned_entities,  │
+  │                │                           │  admin_actions, audit_logs  │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │  core          │  System Infrastructure    │  system_settings,           │
+  │                │                           │  admin_notifications,       │
+  │                │                           │  daily_statistics           │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+SECTION 2: IDENTITY & ACCESS  (App: accounts)
+================================================================================
+
+────────────────────────────────────────────────
+TABLE: users
+Django Model: accounts.User
+Migration: accounts/migrations/0001_initial.py
+────────────────────────────────────────────────
+Purpose:
+  Central identity entity for ALL platform participants (customers, workers,
+  admins). Extends Django's AbstractBaseUser + PermissionsMixin.
+  Replaces the manual `users` table from the Supabase schema.
+
+  KEY CHANGE vs Supabase: password_hash column removed.
+  Django handles all password hashing internally via PBKDF2.
+  ADMINS table removed — replaced by is_staff / is_superuser flags + Groups.
+
+Columns:
+  id                  UUID         PK, default=uuid4(), editable=False
+                                   Matches original schema column name.
+
+  phone               VARCHAR(15)  UNIQUE, NOT NULL, db_index=True
+                                   PRIMARY LOGIN CREDENTIAL.
+                                   Django's USERNAME_FIELD is set to 'phone'.
+
+  email               VARCHAR(255) UNIQUE, NULL, db_index=True
+                                   Optional. Used as fallback login.
+
+  password            TEXT         NOT NULL (managed by Django AbstractBaseUser)
+                                   Stored as PBKDF2 hash — never plaintext.
+                                   Column name in DB: 'password'.
+
+  account_status      VARCHAR(20)  NOT NULL, DEFAULT='active', db_index=True
+                                   Choices: active | suspended | banned
+
+  is_verified         BOOLEAN      DEFAULT=False
+                                   KYC verification flag.
+
+  is_active           BOOLEAN      DEFAULT=True   (Django auth: login allowed)
+  is_staff            BOOLEAN      DEFAULT=False  (Django admin access)
+  is_superuser        BOOLEAN      DEFAULT=False  (all permissions bypass)
+
+  is_deleted          BOOLEAN      DEFAULT=False, db_index=True
+                                   Soft delete flag. Never hard-delete users.
+  deleted_at          TIMESTAMP    NULL — populated when soft-deleted.
+
+  created_at          TIMESTAMP    DEFAULT=NOW()  (db_column = 'created_at')
+                                   Django field: date_joined
+  updated_at          TIMESTAMP    AUTO — updated on every save.
+  last_login          TIMESTAMP    NULL — managed by Django auth on login.
+
+Indexes:
+  idx_users_phone     → phone
+  idx_users_email     → email
+  idx_users_status    → account_status
+  idx_users_deleted   → is_deleted
+
+Constraints:
+  phone UNIQUE
+  email UNIQUE (when not null)
+
+Auth Backend: accounts.backends.PhoneOrEmailBackend
+  → Supports login via phone OR email + password.
+  → Soft-deleted/banned users are rejected at auth layer.
+
+────────────────────────────────────────────────
+TABLE: user_profiles
+Django Model: accounts.UserProfile
+────────────────────────────────────────────────
+Purpose:
+  Extended personal details for a user. Created automatically on registration.
+  OneToOne relationship with users.
+
+Columns:
+  user_id             UUID         PK, FK → users.id (CASCADE)
+  full_name           VARCHAR(255) blank=True
+  gender              VARCHAR(10)  NULL, Choices: male | female | other
+  profile_photo_url   TEXT         NULL — stored in MEDIA_ROOT/profiles/
+  date_of_birth       DATE         NULL
+  language_preference VARCHAR(10)  DEFAULT='en'
+  created_at          TIMESTAMP    AUTO
+  updated_at          TIMESTAMP    AUTO
+
+────────────────────────────────────────────────
+TABLE: roles
+Django Model: accounts.Role
+────────────────────────────────────────────────
+Purpose:
+  Business-level roles catalog (NOT Django security roles).
+  Examples: 'customer', 'worker', 'support_agent'.
+  Django Groups handle system-level permissions separately.
+
+Columns:
+  id          SERIAL       PK (auto-increment integer, matches original)
+  role_name   VARCHAR(50)  UNIQUE, NOT NULL
+  description TEXT         blank=True
+  created_at  TIMESTAMP    AUTO
+
+────────────────────────────────────────────────
+TABLE: user_roles
+Django Model: accounts.UserRole
+────────────────────────────────────────────────
+Purpose:
+  M2M bridge table: users ↔ roles.
+  A user can hold multiple business roles simultaneously.
+
+Columns:
+  id          BIGINT  PK (auto)
+  user_id     UUID    FK → users.id (CASCADE)
+  role_id     INT     FK → roles.id (PROTECT)
+  is_active   BOOLEAN DEFAULT=True
+  assigned_at TIMESTAMP AUTO
+
+Constraints:
+  UNIQUE (user_id, role_id)
+
+Indexes:
+  idx_user_roles_active → (user, is_active)
+
+────────────────────────────────────────────────
+TABLE: worker_profiles
+Django Model: accounts.WorkerProfile
+────────────────────────────────────────────────
+Purpose:
+  Extended attributes for platform service providers.
+  OneToOne with users — only workers have this record.
+
+Columns:
+  user_id              UUID           PK, FK → users.id (CASCADE)
+  worker_status        VARCHAR(20)    NOT NULL, db_index=True
+                                      Choices: active | offline | banned |
+                                               suspended | pending
+  government_id_type   VARCHAR(30)    blank=True
+  government_id_number VARCHAR(30)    UNIQUE, NULL
+  experience_years     SMALLINT       DEFAULT=0
+  bio                  TEXT           blank=True
+
+  average_rating       DECIMAL(3,2)   DEFAULT=0.00
+                                      CHANGE: Float → Decimal for precision.
+
+  total_jobs_completed INT            DEFAULT=0
+  is_available         BOOLEAN        DEFAULT=True, db_index=True
+
+  is_deleted           BOOLEAN        DEFAULT=False, db_index=True
+  deleted_at           TIMESTAMP      NULL
+
+  created_at           TIMESTAMP      AUTO
+  updated_at           TIMESTAMP      AUTO
+
+Indexes:
+  idx_wp_status     → worker_status
+  idx_wp_available  → is_available
+
+────────────────────────────────────────────────
+TABLE: verification_requests
+Django Model: accounts.VerificationRequest
+────────────────────────────────────────────────
+Purpose:
+  KYC document submission queue for worker identity verification.
+  Admin staff reviews and approves/rejects.
+
+Columns:
+  id                   UUID    PK, default=uuid4()
+  worker_id            UUID    FK → worker_profiles.user_id (CASCADE)
+  request_type         VARCHAR(50) DEFAULT='initial_verification'
+  status               VARCHAR(20) DEFAULT='pending', db_index=True
+                                   Choices: pending | approved | rejected
+  documents_submitted  JSONB   DEFAULT=[]
+                                [{type: "aadhar", url: "https://..."}]
+  reviewed_by          UUID    FK → users.id (SET_NULL), NULL
+                                Must be is_staff=True user.
+  reviewed_at          TIMESTAMP NULL
+  rejection_reason     TEXT    blank=True
+  admin_notes          TEXT    blank=True
+  created_at           TIMESTAMP AUTO
+  updated_at           TIMESTAMP AUTO
+
+Indexes:
+  idx_vr_status  → status
+  idx_vr_worker  → worker_id
+
+
+================================================================================
+SECTION 3: MARKETPLACE  (App: marketplace)
+================================================================================
+
+────────────────────────────────────────────────
+TABLE: categories
+Django Model: marketplace.Category
+────────────────────────────────────────────────
+Purpose:
+  Service catalog. Renamed from 'skills' in original schema.
+  Examples: Cleaning, Plumbing, Electrical, Carpentry.
+
+Columns:
+  id            SERIAL       PK (auto-increment integer)
+  name          VARCHAR(100) UNIQUE, NOT NULL, db_index=True
+  description   TEXT         blank=True
+  icon          VARCHAR(255) blank=True — icon name or SVG URL
+  base_rate     DECIMAL(12,2) NULL — CHANGE: Float → Decimal
+  is_active     BOOLEAN      DEFAULT=True, db_index=True
+  display_order SMALLINT     DEFAULT=0
+  is_deleted    BOOLEAN      DEFAULT=False, db_index=True
+  created_at    TIMESTAMP    AUTO
+  updated_at    TIMESTAMP    AUTO
+
+Indexes:
+  idx_cat_active → (is_active, is_deleted)
+  idx_cat_name   → name
+
+────────────────────────────────────────────────
+TABLE: worker_categories
+Django Model: marketplace.WorkerCategory
+────────────────────────────────────────────────
+Purpose:
+  M2M bridge: worker_profiles ↔ categories.
+  Stores a worker's offered services and their custom pricing.
+
+Columns:
+  id               UUID    PK, default=uuid4()
+  worker_id        UUID    FK → worker_profiles.user_id (CASCADE)
+  category_id      INT     FK → categories.id (PROTECT)
+  is_primary       BOOLEAN DEFAULT=False
+  rate_override    DECIMAL(12,2) NULL — custom price for this worker
+  years_experience SMALLINT DEFAULT=0
+  created_at       TIMESTAMP AUTO
+
+Constraints:
+  UNIQUE (worker_id, category_id)  [name: uniq_worker_category]
+
+Indexes:
+  idx_wc_composite → (worker, category)
+
+────────────────────────────────────────────────
+TABLE: addresses
+Django Model: marketplace.Address
+────────────────────────────────────────────────
+Purpose:
+  Physical service delivery locations owned by users.
+
+Columns:
+  address_id    UUID    PK (db_column='address_id')
+  user_id       UUID    FK → users.id (CASCADE)
+  label         VARCHAR(50) blank=True — e.g. 'Home', 'Office'
+  address_line  TEXT    NOT NULL
+  landmark      VARCHAR(255) blank=True
+  city          VARCHAR(100) NOT NULL, db_index=True
+  state         VARCHAR(100) NOT NULL
+  pincode       VARCHAR(10)  NOT NULL
+  latitude      DECIMAL(9,6) NULL — CHANGE: Float → Decimal
+  longitude     DECIMAL(9,6) NULL — CHANGE: Float → Decimal
+  is_default    BOOLEAN DEFAULT=False
+  created_at    TIMESTAMP AUTO
+  updated_at    TIMESTAMP AUTO
+
+Indexes:
+  idx_addr_user_default → (user, is_default)
+  idx_addr_city         → city
+
+────────────────────────────────────────────────
+TABLE: jobs
+Django Model: marketplace.Job
+────────────────────────────────────────────────
+Purpose:
+  Core service-request entity. Created by a customer.
+  Original schema: db_column='job_id' preserved for FK compatibility.
+
+Columns:
+  job_id              UUID         PK (db_column='job_id')
+  user_id             UUID         FK → users.id (PROTECT — no cascade delete)
+  skill_id            INT          FK → categories.id (PROTECT)
+                                   db_column='skill_id' matches original schema
+  address_id          UUID         FK → addresses.address_id (SET_NULL), NULL
+  job_status          VARCHAR(30)  NOT NULL, DEFAULT='pending', db_index=True
+                                   Choices: pending | accepted | in_progress |
+                                            completed | cancelled | disputed
+  final_price         DECIMAL(12,2) NULL — CRITICAL: Float → Decimal
+  description         TEXT         blank=True
+  scheduled_at        TIMESTAMP    NULL, db_index=True
+  cancellation_reason TEXT         blank=True
+
+  is_deleted          BOOLEAN      DEFAULT=False, db_index=True
+  deleted_at          TIMESTAMP    NULL
+
+  created_at          TIMESTAMP    AUTO
+  updated_at          TIMESTAMP    AUTO
+
+Indexes:
+  idx_jobs_status_date → (job_status, scheduled_at)
+  idx_jobs_user_status → (user, job_status)
+  idx_jobs_deleted     → is_deleted
+
+on_delete rules:
+  user    → PROTECT   (cannot delete customer with active jobs)
+  category → PROTECT  (cannot delete category with jobs)
+  address → SET_NULL  (location deleted, job can still exist)
+
+────────────────────────────────────────────────
+TABLE: job_assignments
+Django Model: marketplace.JobAssignment
+────────────────────────────────────────────────
+Purpose:
+  Tracks which worker accepted a job. Full execution timeline stored here.
+
+  DESIGN NOTE: Uses ForeignKey(job) NOT OneToOneField — allows re-assignment
+  if a worker backs out, which is required for real marketplace dynamics.
+
+Columns:
+  id                UUID       PK
+  job_id            UUID       FK → jobs.job_id (CASCADE)
+  worker_id         UUID       FK → worker_profiles.user_id (PROTECT)
+  assignment_status VARCHAR(30) DEFAULT='assigned', db_index=True
+                               Choices: assigned | accepted | rejected |
+                                        started | completed | cancelled
+  accepted_at       TIMESTAMP  NULL
+  started_at        TIMESTAMP  NULL
+  completed_at      TIMESTAMP  NULL
+  cancelled_at      TIMESTAMP  NULL
+  rejection_reason  TEXT       blank=True
+  created_at        TIMESTAMP  AUTO
+  updated_at        TIMESTAMP  AUTO
+
+Indexes:
+  idx_ja_job_status    → (job, assignment_status)
+  idx_ja_worker_status → (worker, assignment_status)
+
+────────────────────────────────────────────────
+TABLE: job_status_history
+Django Model: marketplace.JobStatusHistory
+────────────────────────────────────────────────
+Purpose:
+  Immutable audit trail of all job status transitions.
+  Provides full observability into the job lifecycle for debugging,
+  disputes, and fraud detection.
+
+Columns:
+  id         BIGINT    PK (auto)
+  job_id     UUID      FK → jobs.job_id (CASCADE)
+  old_status VARCHAR(30) — previous state
+  new_status VARCHAR(30) — new state
+  changed_by UUID      FK → users.id (SET_NULL), NULL
+  reason     TEXT      blank=True
+  created_at TIMESTAMP AUTO (no updated_at — append-only)
+
+Indexes:
+  idx_jsh_job → job_id
+
+
+================================================================================
+SECTION 4: FINANCE  (App: finance)
+================================================================================
+
+IMPORTANT: ALL monetary fields use DecimalField(max_digits=12, decimal_places=2).
+Float is NEVER used for money. Binary float rounding (e.g. 99.9999999) is
+unacceptable in any financial system.
+
+────────────────────────────────────────────────
+TABLE: wallets
+Django Model: finance.Wallet
+────────────────────────────────────────────────
+Purpose:
+  Per-user platform credit/escrow wallet.
+  CHANGE: wallet_balance removed from users table.
+  This is the single source of truth for user balances.
+
+  CONCURRENCY RULE: ALL balance updates MUST use:
+    Wallet.objects.select_for_update().get(user=user)
+  inside an atomic transaction block to prevent race conditions.
+
+Columns:
+  user_id         UUID         PK, FK → users.id (CASCADE)
+  current_balance DECIMAL(12,2) DEFAULT=0.00, >= 0
+  currency        VARCHAR(5)   DEFAULT='INR'
+  is_frozen       BOOLEAN      DEFAULT=False
+  last_updated_at TIMESTAMP    AUTO
+  created_at      TIMESTAMP    AUTO
+
+────────────────────────────────────────────────
+TABLE: transactions
+Django Model: finance.Transaction
+────────────────────────────────────────────────
+Purpose:
+  Full double-entry ledger of all platform financial movements.
+  Every money movement (payment, refund, payout, top-up) creates one record.
+  db_column='transaction_id' matches original schema.
+
+Columns:
+  transaction_id     UUID         PK (db_column='transaction_id')
+  job_id             UUID         FK → jobs.job_id (PROTECT), NULL
+                                  on_delete=PROTECT — financial records
+                                  must survive job deletion.
+  from_user_id       UUID         FK → users.id (PROTECT), NULL
+  to_user_id         UUID         FK → users.id (PROTECT), NULL
+  transaction_type   VARCHAR(20)  DEFAULT='payment', db_index=True
+                                  Choices: payment | refund | payout |
+                                           top_up | reversal
+  amount             DECIMAL(12,2) NOT NULL, >= 0
+  currency           VARCHAR(5)   DEFAULT='INR'
+  transaction_status VARCHAR(20)  DEFAULT='pending', db_index=True
+                                  Choices: pending | success | failed | reversed
+  payment_method     VARCHAR(30)  blank=True — upi | card | wallet | netbanking
+  gateway_reference  VARCHAR(255) blank=True
+  failure_reason     TEXT         blank=True
+  metadata           JSONB        DEFAULT={}
+  created_at         TIMESTAMP    AUTO
+  updated_at         TIMESTAMP    AUTO
+
+Indexes:
+  idx_txn_status → transaction_status
+  idx_txn_job    → job_id
+  idx_txn_from   → from_user_id
+  idx_txn_to     → to_user_id
+
+────────────────────────────────────────────────
+TABLE: platform_commissions
+Django Model: finance.PlatformCommission
+────────────────────────────────────────────────
+Purpose:
+  Tracks the platform's earnings per completed job.
+
+Columns:
+  job_id                UUID         PK, FK → jobs.job_id (PROTECT)
+  commission_percentage DECIMAL(5,2) NOT NULL
+  commission_amount     DECIMAL(12,2) NOT NULL
+  is_settled            BOOLEAN      DEFAULT=False
+  settled_at            TIMESTAMP    NULL
+  created_at            TIMESTAMP    AUTO
+  updated_at            TIMESTAMP    AUTO
+
+CheckConstraint:
+  chk_commission_pct_range → commission_percentage BETWEEN 0 AND 100
+
+────────────────────────────────────────────────
+TABLE: payment_disputes
+Django Model: finance.PaymentDispute
+────────────────────────────────────────────────
+Purpose:
+  Financial disagreements between customers and workers.
+  Admin reviews; may trigger refund transactions.
+  db_column='booking_id' for job FK (matches frontend expectation).
+
+Columns:
+  id              UUID         PK
+  booking_id      UUID         FK → jobs.job_id (PROTECT)
+                               db_column='booking_id'
+  raised_by       UUID         FK → users.id (PROTECT)
+  raised_by_type  VARCHAR(20)  'customer' or 'worker'
+  dispute_type    VARCHAR(50)  blank=True
+  amount_disputed DECIMAL(12,2) NULL
+  description     TEXT         blank=True
+  evidence_urls   JSONB        DEFAULT=[]
+  status          VARCHAR(20)  DEFAULT='open', db_index=True
+                               Choices: open | in_review | resolved | dismissed
+  resolution      TEXT         blank=True
+  refund_amount   DECIMAL(12,2) NULL
+  assigned_to     UUID         FK → users.id (SET_NULL), NULL
+  resolved_by     UUID         FK → users.id (SET_NULL), NULL
+  resolved_at     TIMESTAMP    NULL
+  admin_notes     TEXT         blank=True
+  created_at      TIMESTAMP    AUTO
+  updated_at      TIMESTAMP    AUTO
+
+Indexes:
+  idx_disputes_status → status
+  idx_disputes_job    → booking_id
+
+────────────────────────────────────────────────
+TABLE: ratings
+Django Model: finance.Rating
+────────────────────────────────────────────────
+Purpose:
+  Bidirectional star ratings and text reviews submitted after job completion.
+  db_column='rating_id' matches original schema.
+
+Columns:
+  rating_id    UUID     PK (db_column='rating_id')
+  job_id       UUID     FK → jobs.job_id (CASCADE)
+  from_user_id UUID     FK → users.id (CASCADE)
+  to_user_id   UUID     FK → users.id (CASCADE)
+  rating_value SMALLINT NOT NULL, 1 ≤ rating_value ≤ 5
+  review_text  TEXT     blank=True
+  rating_type  VARCHAR(20) DEFAULT='job_review'
+  created_at   TIMESTAMP AUTO
+
+Constraints:
+  UNIQUE (job_id, from_user_id, rating_type)
+  chk_rating_value_range → rating_value BETWEEN 1 AND 5
+
+Indexes:
+  Implicit indexes on all FK columns.
+
+
+================================================================================
+SECTION 5: MODERATION  (App: moderation)
+================================================================================
+
+────────────────────────────────────────────────
+TABLE: reports
+Django Model: moderation.Report
+────────────────────────────────────────────────
+Purpose:
+  General moderation tickets submitted by users for abuse, scams, bugs, etc.
+
+Columns:
+  id                 UUID     PK
+  reporter_id        UUID     FK → users.id (PROTECT)
+  target_entity_type VARCHAR(50) blank=True — 'user' | 'worker' | 'job'
+  target_entity_id   UUID     NULL
+  report_type        VARCHAR(20) NOT NULL, db_index=True
+                               Choices: abuse | scam | bug | fake | spam | other
+  description        TEXT     NOT NULL
+  status             VARCHAR(20) DEFAULT='open', db_index=True
+                               Choices: open | in_review | resolved | dismissed
+  admin_notes        TEXT     blank=True
+  resolved_by        UUID     FK → users.id (SET_NULL), NULL
+  resolved_at        TIMESTAMP NULL
+  created_at         TIMESTAMP AUTO
+  updated_at         TIMESTAMP AUTO
+
+Indexes:
+  idx_reports_status   → status
+  idx_reports_type     → report_type
+  idx_reports_reporter → reporter_id
+
+────────────────────────────────────────────────
+TABLE: banned_entities
+Django Model: moderation.BannedEntity
+────────────────────────────────────────────────
+Purpose:
+  Registry of all platform bans (users, workers, IPs, devices).
+  Uses string entity_type instead of FK for multi-type flexibility.
+
+Columns:
+  id          UUID     PK
+  entity_id   UUID     NOT NULL, db_index=True
+  entity_type VARCHAR(20) NOT NULL, db_index=True
+                          Choices: user | worker | ip | device
+  reason      TEXT     NOT NULL
+  is_active   BOOLEAN  DEFAULT=True, db_index=True
+  banned_by   UUID     FK → users.id (SET_NULL), NULL
+  expires_at  TIMESTAMP NULL — NULL means permanent ban
+  created_at  TIMESTAMP AUTO
+  updated_at  TIMESTAMP AUTO
+
+Indexes:
+  idx_ban_entity → (entity_id, entity_type)
+  idx_ban_active → is_active
+
+────────────────────────────────────────────────
+TABLE: admin_actions
+Django Model: moderation.AdminAction
+────────────────────────────────────────────────
+Purpose:
+  Records deliberate staff interventions for workflow tracking.
+  Separate from audit_logs (which covers all system events).
+
+Columns:
+  admin_action_id    UUID     PK (db_column='admin_action_id')
+  admin_user_id      UUID     FK → users.id (PROTECT), must be is_staff=True
+  action_type        VARCHAR(50) NOT NULL, db_index=True
+  target_entity_type VARCHAR(50) blank=True
+  target_entity_id   UUID     NULL
+  description        TEXT     blank=True
+  metadata           JSONB    DEFAULT={}
+  created_at         TIMESTAMP AUTO
+
+────────────────────────────────────────────────
+TABLE: audit_logs
+Django Model: moderation.AuditLog
+────────────────────────────────────────────────
+Purpose:
+  Immutable, append-only system-wide event log for security and compliance.
+
+  CRITICAL DESIGN RULES:
+  1. Records CANNOT be modified — model.save() raises PermissionError if pk exists.
+  2. Records CANNOT be deleted — model.delete() raises PermissionError always.
+  3. Django admin has_change_permission=False and has_delete_permission=False.
+  4. No updated_at column — records are immutable.
+
+  This replaces Supabase Row-Level Security audit trail with
+  application-level enforcement.
+
+Columns:
+  id          UUID     PK
+  admin_id    UUID     FK → users.id (SET_NULL), NULL, db_column='admin_id'
+                       Must be is_staff=True user.
+  action_type VARCHAR(50) NOT NULL, db_index=True
+                          e.g. create | update | delete | login | logout | ban
+  target_type VARCHAR(50) blank=True, db_index=True
+                          e.g. user | job | worker | system
+  target_id   UUID     NULL
+  description TEXT     blank=True
+  ip_address  INET     NULL
+  user_agent  TEXT     blank=True
+  before_data JSONB    NULL — snapshot before change
+  after_data  JSONB    NULL — snapshot after change
+  created_at  TIMESTAMP AUTO (immutable)
+
+Indexes:
+  idx_al_action → action_type
+  idx_al_target → target_type
+  idx_al_date   → created_at
+
+
+================================================================================
+SECTION 6: CORE / SYSTEM  (App: core)
+================================================================================
+
+────────────────────────────────────────────────
+TABLE: system_settings
+Django Model: core.SystemSetting
+────────────────────────────────────────────────
+Purpose:
+  Runtime key-value configuration store.
+  Admins can modify platform behavior without redeploying.
+
+  TEXT primary key matches original schema (not UUID).
+
+Columns:
+  key         TEXT     PK — unique setting name (e.g. 'maintenance_mode')
+  value       JSONB    NOT NULL — setting value (any JSON type)
+  description TEXT     blank=True
+  category    VARCHAR(50) blank=True, db_index=True — grouping for admin UI
+  is_public   BOOLEAN  DEFAULT=False — if True, readable by frontend API
+  is_editable BOOLEAN  DEFAULT=True
+  created_at  TIMESTAMP AUTO
+  updated_at  TIMESTAMP AUTO
+
+────────────────────────────────────────────────
+TABLE: admin_notifications
+Django Model: core.AdminNotification
+────────────────────────────────────────────────
+Purpose:
+  In-app alert bell notifications for admin dashboard users.
+  Not email — these are dashboard UI notifications only.
+
+Columns:
+  id                UUID     PK
+  recipient_id      UUID     FK → users.id (CASCADE), NULL
+                             NULL = broadcast to all staff users.
+  title             VARCHAR(255) NOT NULL
+  body              TEXT     NOT NULL
+  notification_type VARCHAR(50) blank=True, db_index=True
+  priority          VARCHAR(20) DEFAULT='normal', db_index=True
+                               Choices: low | normal | high | critical
+  data              JSONB    DEFAULT={}
+  is_read           BOOLEAN  DEFAULT=False, db_index=True
+  read_at           TIMESTAMP NULL
+  created_at        TIMESTAMP AUTO
+
+Indexes:
+  idx_notif_unread    → (is_read, recipient_id)
+  idx_notif_priority  → priority
+
+────────────────────────────────────────────────
+TABLE: daily_statistics
+Django Model: core.DailyStatistic
+────────────────────────────────────────────────
+Purpose:
+  Pre-aggregated platform metrics per day.
+  Powers admin dashboard charts without expensive live queries.
+  Populated by a management command or Celery periodic task.
+
+Columns:
+  id                  UUID     PK
+  date                DATE     UNIQUE, NOT NULL, db_index=True
+  total_bookings      INT      DEFAULT=0
+  completed_bookings  INT      DEFAULT=0
+  cancelled_bookings  INT      DEFAULT=0
+  total_revenue       DECIMAL(15,2) DEFAULT=0
+  total_payouts       DECIMAL(15,2) DEFAULT=0
+  platform_earnings   DECIMAL(15,2) DEFAULT=0
+  new_users           INT      DEFAULT=0
+  new_workers         INT      DEFAULT=0
+  active_workers      INT      DEFAULT=0
+  metadata            JSONB    DEFAULT={}
+  created_at          TIMESTAMP AUTO
+  updated_at          TIMESTAMP AUTO
+
+
+================================================================================
+SECTION 7: KEY ARCHITECTURAL DIFFERENCES FROM SUPABASE SCHEMA
+================================================================================
+
+  ┌────────────────────────────────────────────────────────────────────────────┐
+  │  Concern          │  Supabase Schema          │  Django Schema             │
+  ├────────────────────────────────────────────────────────────────────────────┤
+  │  Auth             │  Manual password_hash      │  AbstractBaseUser +        │
+  │                   │  column on users table     │  Django PBKDF2 hashing     │
+  ├────────────────────────────────────────────────────────────────────────────┤
+  │  Admin Access     │  Separate ADMINS table     │  is_staff / is_superuser   │
+  │                   │  with email/role columns   │  + Django Groups           │
+  ├────────────────────────────────────────────────────────────────────────────┤
+  │  Money Fields     │  FLOAT everywhere          │  DecimalField(12,2) always │
+  ├────────────────────────────────────────────────────────────────────────────┤
+  │  Wallet           │  wallet_balance on users   │  Separate wallets table    │
+  │                   │  table                     │  OneToOne(User)            │
+  ├────────────────────────────────────────────────────────────────────────────┤
+  │  Permissions      │  Row-Level Security (RLS)  │  DRF Permission Classes    │
+  │                   │  in PostgreSQL             │  + Queryset filtering      │
+  ├────────────────────────────────────────────────────────────────────────────┤
+  │  Timestamps       │  Inconsistent / missing    │  created_at + updated_at   │
+  │                   │  on many tables            │  on ALL transactional tbls │
+  ├────────────────────────────────────────────────────────────────────────────┤
+  │  Soft Delete      │  No soft delete            │  is_deleted + deleted_at   │
+  │                   │                            │  on users, jobs, workers   │
+  ├────────────────────────────────────────────────────────────────────────────┤
+  │  Audit Trail      │  Supabase audit extension  │  Immutable AuditLog model  │
+  │                   │                            │  (save/delete blocked)     │
+  ├────────────────────────────────────────────────────────────────────────────┤
+  │  Coordinates      │  FLOAT lat/lng             │  Decimal(9,6) lat/lng      │
+  ├────────────────────────────────────────────────────────────────────────────┤
+  │  Job FK naming    │  job_id (PK), skill_id     │  db_column preserves all   │
+  │                   │  (FK to skills)            │  original column names     │
+  └────────────────────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+SECTION 8: DB-LEVEL CONSTRAINTS SUMMARY
+================================================================================
+
+  CheckConstraints:
+    chk_commission_pct_range  → commission_percentage BETWEEN 0 AND 100
+    chk_rating_value_range    → rating_value BETWEEN 1 AND 5
+
+  UniqueConstraints:
+    uniq_worker_category      → UNIQUE (worker_id, category_id) in worker_categories
+    users.phone               → UNIQUE
+    users.email               → UNIQUE (nullable)
+    roles.role_name           → UNIQUE
+    user_roles                → UNIQUE (user_id, role_id)
+    categories.name           → UNIQUE
+    worker_profiles.govt_id   → UNIQUE (government_id_number)
+    ratings                   → UNIQUE (job_id, from_user_id, rating_type)
+    daily_statistics.date     → UNIQUE
+
+  Protect Rules (no cascade delete on financial data):
+    transactions.job       → PROTECT
+    transactions.from_user → PROTECT
+    transactions.to_user   → PROTECT
+    platform_commissions.job → PROTECT
+    payment_disputes.job   → PROTECT
+    jobs.user              → PROTECT
+    jobs.category          → PROTECT
+
+
+================================================================================
+SECTION 9: INDEX STRATEGY
+================================================================================
+
+All indexes follow the naming pattern: idx_{table_abbreviation}_{field}
+
+Performance indexes:
+  idx_users_phone           → phone (primary login field)
+  idx_users_email           → email (login fallback)
+  idx_users_status          → account_status (filtering)
+  idx_users_deleted         → is_deleted (soft delete filter)
+  idx_user_roles_active     → (user, is_active)
+  idx_vr_status             → verification status
+  idx_vr_worker             → worker lookups
+  idx_wp_status             → worker_status
+  idx_wp_available          → is_available (marketplace matching)
+  idx_cat_active            → (is_active, is_deleted)
+  idx_cat_name              → name (search)
+  idx_addr_user_default     → (user, is_default)
+  idx_addr_city             → city (geographic filter)
+  idx_jobs_status_date      → (job_status, scheduled_at) — COMPOSITE (hot path)
+  idx_jobs_user_status      → (user, job_status) — COMPOSITE (hot path)
+  idx_jobs_deleted          → is_deleted
+  idx_ja_job_status         → (job, assignment_status) — COMPOSITE
+  idx_ja_worker_status      → (worker, assignment_status) — COMPOSITE
+  idx_jsh_job               → job (status history lookups)
+  idx_wc_composite          → (worker, category) — COMPOSITE
+  idx_txn_status            → transaction_status
+  idx_txn_job               → job FK
+  idx_txn_from / idx_txn_to → sender/receiver lookups
+  idx_disputes_status       → dispute status
+  idx_disputes_job          → job FK
+  idx_reports_status        → report status
+  idx_reports_type          → report type
+  idx_reports_reporter      → reporter FK
+  idx_ban_entity            → (entity_id, entity_type) — COMPOSITE
+  idx_ban_active            → is_active
+  idx_al_action             → action_type
+  idx_al_target             → target_type
+  idx_al_date               → created_at (chronological log queries)
+  idx_notif_unread          → (is_read, recipient)
+  idx_notif_priority        → priority
+
+
+================================================================================
+SECTION 10: MIGRATION COMMANDS
+================================================================================
+
+Initial Setup:
+  # 1. Set up virtual environment:
+  python3 -m venv venv && source venv/bin/activate
+
+  # 2. Install dependencies:
+  pip install -r requirements.txt
+
+  # 3. Configure .env (copy .env.example and fill values):
+  cp .env.example .env
+
+  # 4. Apply migrations:
+  python manage.py migrate
+
+  # 5. Create a superuser for Django admin:
+  python manage.py createsuperuser
+
+  # 6. Run dev server:
+  python manage.py runserver
+
+Connecting to PostgreSQL (Production):
+  Update .env:
+    DB_ENGINE=django.db.backends.postgresql
+    DB_NAME=your_db_name
+    DB_USER=your_db_user
+    DB_PASSWORD=your_db_password
+    DB_HOST=your_db_host
+    DB_PORT=5432
+
+  Then run: python manage.py migrate
+
+================================================================================
+END OF DOCUMENTATION
+================================================================================
