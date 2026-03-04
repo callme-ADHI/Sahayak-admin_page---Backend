@@ -19,10 +19,10 @@ ENV/
 # ── Django ──────────────────────────────────────────────
 *.log
 *.pot
-db.sqlite3          # dev database
+db.sqlite3
 db.sqlite3-journal
-media/              # user uploads
-staticfiles/        # collected static
+media/
+staticfiles/
 
 # ── Environment Secrets (NEVER commit real .env) ────────
 .env
