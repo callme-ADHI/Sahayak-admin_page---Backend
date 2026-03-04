@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Download, Filter, Search, User, Settings, FileText, Shield } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/api';
 import { DataTable } from '@/components/common/DataTable';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -17,19 +17,16 @@ import {
 } from '@/components/ui/select';
 import { format } from 'date-fns';
 
+const unwrap = (data: any): any[] => data?.results ?? (Array.isArray(data) ? data : []);
+
 const useAuditLogs = () => {
   return useQuery({
     queryKey: ['audit-logs'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('audit_logs')
-        .select('*, admins(name, email)')
-        .order('created_at', { ascending: false })
-        .limit(100);
-      
-      if (error) throw error;
-      return data;
+      const { data } = await api.get('/moderation/audit_logs/');
+      return unwrap(data);
     },
+    retry: 1,
   });
 };
 
@@ -63,9 +60,9 @@ const AuditLogs = () => {
     );
   };
 
-  const filteredLogs = logs.filter(log => {
+  const filteredLogs = logs.filter((log: any) => {
     const matchesSearch = log.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         log.target_type?.toLowerCase().includes(searchTerm.toLowerCase());
+      log.target_type?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesAction = actionFilter === 'all' || log.action_type === actionFilter;
     const matchesTarget = targetFilter === 'all' || log.target_type === targetFilter;
     return matchesSearch && matchesAction && matchesTarget;
@@ -97,25 +94,22 @@ const AuditLogs = () => {
       key: 'target_type',
       header: 'Target',
       render: (item: any) => (
-        <Badge variant="outline" className="capitalize">
-          {item.target_type}
-        </Badge>
+        <Badge variant="outline" className="capitalize">{item.target_type}</Badge>
       ),
     },
     {
       key: 'description',
       header: 'Description',
-      render: (item: any) => (
-        <p className="text-sm max-w-md truncate">{item.description}</p>
-      ),
+      render: (item: any) => <p className="text-sm max-w-md truncate">{item.description}</p>,
     },
     {
       key: 'admin',
       header: 'Performed By',
       render: (item: any) => (
         <div className="text-sm">
-          <p className="font-medium">{item.admins?.name || 'System'}</p>
-          <p className="text-muted-foreground text-xs">{item.admins?.email || '-'}</p>
+          {/* admin_name is computed by AuditLogSerializer */}
+          <p className="font-medium">{item.admin_name || 'System'}</p>
+          <p className="text-muted-foreground text-xs">{item.admin_phone || '-'}</p>
         </div>
       ),
     },
@@ -123,25 +117,23 @@ const AuditLogs = () => {
       key: 'ip_address',
       header: 'IP Address',
       render: (item: any) => (
-        <span className="text-sm font-mono text-muted-foreground">
-          {item.ip_address || '-'}
-        </span>
+        <span className="text-sm font-mono text-muted-foreground">{item.ip_address || '-'}</span>
       ),
     },
   ];
 
-  const actionTypes = [...new Set(logs.map(l => l.action_type))];
-  const targetTypes = [...new Set(logs.map(l => l.target_type))];
+  const actionTypes = [...new Set(logs.map((l: any) => l.action_type))];
+  const targetTypes = [...new Set(logs.map((l: any) => l.target_type))];
 
   const handleExport = () => {
     const csv = [
       ['Timestamp', 'Action', 'Target', 'Description', 'Admin', 'IP Address'].join(','),
-      ...filteredLogs.map(log => [
+      ...filteredLogs.map((log: any) => [
         format(new Date(log.created_at), 'yyyy-MM-dd HH:mm:ss'),
         log.action_type,
         log.target_type,
         `"${log.description?.replace(/"/g, '""') || ''}"`,
-        log.admins?.name || 'System',
+        log.admin_name || 'System',
         log.ip_address || '',
       ].join(','))
     ].join('\n');
@@ -179,81 +171,35 @@ const AuditLogs = () => {
         </Button>
       </div>
 
-      {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-foreground">{logs.length}</div>
-            <p className="text-sm text-muted-foreground">Total Logs</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-success">
-              {logs.filter(l => l.action_type === 'create').length}
-            </div>
-            <p className="text-sm text-muted-foreground">Creates</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-primary">
-              {logs.filter(l => l.action_type === 'update').length}
-            </div>
-            <p className="text-sm text-muted-foreground">Updates</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-destructive">
-              {logs.filter(l => l.action_type === 'delete').length}
-            </div>
-            <p className="text-sm text-muted-foreground">Deletes</p>
-          </CardContent>
-        </Card>
+        <Card><CardContent className="pt-6"><div className="text-2xl font-bold text-foreground">{logs.length}</div><p className="text-sm text-muted-foreground">Total Logs</p></CardContent></Card>
+        <Card><CardContent className="pt-6"><div className="text-2xl font-bold text-success">{logs.filter((l: any) => l.action_type === 'create').length}</div><p className="text-sm text-muted-foreground">Creates</p></CardContent></Card>
+        <Card><CardContent className="pt-6"><div className="text-2xl font-bold text-primary">{logs.filter((l: any) => l.action_type === 'update').length}</div><p className="text-sm text-muted-foreground">Updates</p></CardContent></Card>
+        <Card><CardContent className="pt-6"><div className="text-2xl font-bold text-destructive">{logs.filter((l: any) => l.action_type === 'delete').length}</div><p className="text-sm text-muted-foreground">Deletes</p></CardContent></Card>
       </div>
 
-      {/* Filters */}
       <div className="flex flex-wrap gap-4">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
-          <Input
-            placeholder="Search logs..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10"
-          />
+          <Input placeholder="Search logs..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10" />
         </div>
         <Select value={actionFilter} onValueChange={setActionFilter}>
-          <SelectTrigger className="w-[150px]">
-            <SelectValue placeholder="Action Type" />
-          </SelectTrigger>
+          <SelectTrigger className="w-[150px]"><SelectValue placeholder="Action Type" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Actions</SelectItem>
-            {actionTypes.map(type => (
-              <SelectItem key={type} value={type} className="capitalize">{type}</SelectItem>
-            ))}
+            {actionTypes.map((type: any) => <SelectItem key={type} value={type} className="capitalize">{type}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={targetFilter} onValueChange={setTargetFilter}>
-          <SelectTrigger className="w-[150px]">
-            <SelectValue placeholder="Target Type" />
-          </SelectTrigger>
+          <SelectTrigger className="w-[150px]"><SelectValue placeholder="Target Type" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Targets</SelectItem>
-            {targetTypes.map(type => (
-              <SelectItem key={type} value={type} className="capitalize">{type}</SelectItem>
-            ))}
+            {targetTypes.map((type: any) => <SelectItem key={type} value={type} className="capitalize">{type}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
 
-      {/* Data Table */}
-      <DataTable
-        data={filteredLogs}
-        columns={columns}
-        searchPlaceholder="Search logs..."
-      />
+      <DataTable data={filteredLogs} columns={columns} searchPlaceholder="Search logs..." />
     </div>
   );
 };

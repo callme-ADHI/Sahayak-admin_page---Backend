@@ -30,20 +30,20 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
-import type { Json } from '@/integrations/supabase/types';
+import { api } from '@/api';
 
+// Django category — id is a number, no Supabase Json type needed
 interface Category {
-  id: string;
+  id: number;
   name: string;
   description: string | null;
   icon: string | null;
-  base_rate: number | null;
-  is_active: boolean | null;
-  display_order: number | null;
-  metadata: Json | null;
+  base_rate: string | null;   // DRF returns DecimalField as string
+  is_active: boolean;
+  display_order: number;
+  is_deleted: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -64,19 +64,6 @@ const WorkCategories = () => {
   const [editBaseRate, setEditBaseRate] = useState('');
   const [editIsActive, setEditIsActive] = useState(true);
   const [editIcon, setEditIcon] = useState('');
-  const [editTags, setEditTags] = useState('');
-
-  const getTags = (category: Category): string[] => {
-    if (category.metadata && typeof category.metadata === 'object' && 'tags' in category.metadata) {
-      return (category.metadata as { tags: string[] }).tags || [];
-    }
-    return [];
-  };
-
-  const categoriesWithTags = categories.map(cat => ({
-    ...cat,
-    tagsString: getTags(cat).join(', ')
-  }));
 
   const handleView = (category: Category) => {
     setSelectedCategory(category);
@@ -87,10 +74,9 @@ const WorkCategories = () => {
     setSelectedCategory(category);
     setEditName(category.name);
     setEditDescription(category.description || '');
-    setEditBaseRate(category.base_rate?.toString() || '');
-    setEditIsActive(category.is_active ?? true);
+    setEditBaseRate(category.base_rate ?? '');
+    setEditIsActive(category.is_active);
     setEditIcon(category.icon || '');
-    setEditTags(getTags(category).join(', '));
     setShowEditModal(true);
   };
 
@@ -99,138 +85,73 @@ const WorkCategories = () => {
     setShowDeleteDialog(true);
   };
 
+  /* Soft-delete via Django PATCH is_deleted=true */
   const confirmDelete = async () => {
     if (!selectedCategory) return;
-
     try {
-      const { error } = await supabase
-        .from('categories')
-        .delete()
-        .eq('id', selectedCategory.id);
-
-      if (error) throw error;
-
+      await api.patch(`/marketplace/categories/${selectedCategory.id}/`, { is_deleted: true });
       toast.success('Category deleted successfully');
       queryClient.invalidateQueries({ queryKey: ['categories'] });
       setShowDeleteDialog(false);
-    } catch (error) {
+    } catch {
       toast.error('Failed to delete category');
     }
   };
 
   const saveEdit = async () => {
     if (!selectedCategory) return;
-
     try {
-      const tagsArray = editTags.split(',').map(t => t.trim()).filter(t => t);
-
-      const { error } = await supabase
-        .from('categories')
-        .update({
-          name: editName,
-          description: editDescription || null,
-          base_rate: editBaseRate ? parseFloat(editBaseRate) : null,
-          is_active: editIsActive,
-          icon: editIcon || null,
-          metadata: { tags: tagsArray }
-        })
-        .eq('id', selectedCategory.id);
-
-      if (error) {
-        if (error.code === '23505' || error.message.includes('409')) {
-          toast.error('Category name already exists');
-          return;
-        }
-        throw error;
-      }
-
+      await api.patch(`/marketplace/categories/${selectedCategory.id}/`, {
+        name: editName,
+        description: editDescription || null,
+        base_rate: editBaseRate ? parseFloat(editBaseRate) : null,
+        is_active: editIsActive,
+        icon: editIcon || null,
+      });
       toast.success('Category updated successfully');
       queryClient.invalidateQueries({ queryKey: ['categories'] });
       setShowEditModal(false);
-    } catch (error) {
-      console.error('Update error:', error);
-      toast.error('Failed to update category');
+    } catch (err: any) {
+      const msg = err?.response?.data?.name?.[0] || 'Failed to update category';
+      toast.error(msg);
     }
   };
 
   const columns = [
     { key: 'name', header: 'Category Name', sortable: true },
     {
-      key: 'description',
-      header: 'Description',
+      key: 'description', header: 'Description',
       render: (cat: Category) => (
         <span className="text-muted-foreground line-clamp-1" title={cat.description || ''}>
           {cat.description || '-'}
         </span>
-      )
+      ),
     },
     {
-      key: 'base_rate',
-      header: 'Base Rate',
-      sortable: true,
-      render: (cat: Category) => (
-        <span className="font-medium">₹{cat.base_rate || 0}</span>
-      )
+      key: 'base_rate', header: 'Base Rate', sortable: true,
+      render: (cat: Category) => <span className="font-medium">₹{cat.base_rate || 0}</span>,
     },
     {
-      key: 'is_active',
-      header: 'Status',
-      render: (cat: Category) => <StatusBadge status={cat.is_active ? 'Active' : 'Inactive'} />
+      key: 'is_active', header: 'Status',
+      render: (cat: Category) => <StatusBadge status={cat.is_active ? 'Active' : 'Inactive'} />,
     },
     {
-      key: 'tagsString', // Use the flat string for searching
-      header: 'Tags',
-      render: (cat: Category) => {
-        const tags = getTags(cat);
-        return tags.length > 0 ? (
-          <div className="flex flex-wrap gap-1">
-            {tags.slice(0, 2).map(tag => (
-              <Badge key={tag} variant="outline" className="text-xs">{tag}</Badge>
-            ))}
-            {tags.length > 2 && <span className="text-xs text-muted-foreground self-center">+{tags.length - 2}</span>}
-          </div>
-        ) : '-';
-      }
-    },
-    {
-      key: 'actions',
-      header: 'Actions',
+      key: 'actions', header: 'Actions',
       render: (cat: Category) => (
         <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleView(cat);
-            }}
-          >
+          <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); handleView(cat); }}>
             <Eye className="w-4 h-4" />
           </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleEdit(cat);
-            }}
-          >
+          <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); handleEdit(cat); }}>
             <Edit className="w-4 h-4" />
           </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="text-destructive hover:text-destructive"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleDelete(cat);
-            }}
-          >
+          <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive"
+            onClick={(e) => { e.stopPropagation(); handleDelete(cat); }}>
             <Trash2 className="w-4 h-4" />
           </Button>
         </div>
-      )
-    }
+      ),
+    },
   ];
 
   if (isLoading) {
@@ -260,10 +181,10 @@ const WorkCategories = () => {
 
       <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
         <DataTable
-          data={categoriesWithTags}
+          data={categories}
           columns={columns}
           searchPlaceholder="Search categories..."
-          onRowClick={handleView}
+          onRowClick={(cat) => handleView(cat as Category)}
         />
       </div>
 
@@ -291,15 +212,6 @@ const WorkCategories = () => {
                 </div>
               </div>
               <div>
-                <Label className="text-muted-foreground">Tags</Label>
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {getTags(selectedCategory).map(tag => (
-                    <Badge key={tag} variant="secondary">{tag}</Badge>
-                  ))}
-                  {getTags(selectedCategory).length === 0 && <p className="text-sm">No tags</p>}
-                </div>
-              </div>
-              <div>
                 <Label className="text-muted-foreground">Created</Label>
                 <p className="font-medium">{new Date(selectedCategory.created_at).toLocaleDateString()}</p>
               </div>
@@ -318,59 +230,27 @@ const WorkCategories = () => {
           <div className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="edit-name">Name</Label>
-              <Input
-                id="edit-name"
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
-              />
+              <Input id="edit-name" value={editName} onChange={(e) => setEditName(e.target.value)} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-description">Description</Label>
-              <Textarea
-                id="edit-description"
-                value={editDescription}
-                onChange={(e) => setEditDescription(e.target.value)}
-              />
+              <Textarea id="edit-description" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-rate">Base Rate (₹)</Label>
-              <Input
-                id="edit-rate"
-                type="number"
-                value={editBaseRate}
-                onChange={(e) => setEditBaseRate(e.target.value)}
-              />
+              <Input id="edit-rate" type="number" value={editBaseRate} onChange={(e) => setEditBaseRate(e.target.value)} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-icon">Icon URL / Name</Label>
-              <Input
-                id="edit-icon"
-                value={editIcon}
-                onChange={(e) => setEditIcon(e.target.value)}
-                placeholder="e.g. briefcase"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-tags">Tags</Label>
-              <Input
-                id="edit-tags"
-                value={editTags}
-                onChange={(e) => setEditTags(e.target.value)}
-                placeholder="Comma separated tags (e.g. urgent, premium)"
-              />
+              <Input id="edit-icon" value={editIcon} onChange={(e) => setEditIcon(e.target.value)} placeholder="e.g. briefcase" />
             </div>
             <div className="flex items-center justify-between">
               <Label>Active Status</Label>
-              <Switch
-                checked={editIsActive}
-                onCheckedChange={setEditIsActive}
-              />
+              <Switch checked={editIsActive} onCheckedChange={setEditIsActive} />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowEditModal(false)}>
-              Cancel
-            </Button>
+            <Button variant="outline" onClick={() => setShowEditModal(false)}>Cancel</Button>
             <Button onClick={saveEdit} disabled={updateCategory.isPending}>
               {updateCategory.isPending ? 'Saving...' : 'Save Changes'}
             </Button>

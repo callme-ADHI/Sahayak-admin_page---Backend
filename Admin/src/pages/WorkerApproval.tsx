@@ -20,23 +20,22 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { supabase } from '@/integrations/supabase/client';
+import { api } from '@/api';
 import { useQuery } from '@tanstack/react-query';
 
-const useWorkerDocuments = (workerId: string | null) => {
+// Fetch verification requests for a worker from Django
+const useWorkerVerificationRequests = (workerId: string | null) => {
   return useQuery({
-    queryKey: ['worker-documents', workerId],
+    queryKey: ['worker-verification-requests', workerId],
     queryFn: async () => {
       if (!workerId) return [];
-      const { data, error } = await supabase
-        .from('verification_documents')
-        .select('*')
-        .eq('worker_id', workerId);
-      
-      if (error) throw error;
-      return data;
+      const { data } = await api.get('/accounts/verification_requests/', {
+        params: { worker: workerId },
+      });
+      return data?.results ?? (Array.isArray(data) ? data : []);
     },
     enabled: !!workerId,
+    retry: 1,
   });
 };
 
@@ -48,19 +47,23 @@ const WorkerApproval = () => {
   const [showRequestInfoModal, setShowRequestInfoModal] = useState(false);
   const [adminNotes, setAdminNotes] = useState('');
   const [requestMessage, setRequestMessage] = useState('');
-  
+
   const approveWorker = useApproveWorker();
   const rejectWorker = useRejectWorker();
-  const { data: documents = [] } = useWorkerDocuments(selectedWorker?.worker_id || selectedWorker?.workers?.id);
+
+  // Verification requests for the selected worker (replaces Supabase verification_documents query)
+  const { data: verificationRequests = [] } = useWorkerVerificationRequests(
+    selectedWorker?.user_id ?? null
+  );
 
   const handleApprove = async () => {
     if (!selectedWorker) return;
     try {
-      await approveWorker.mutateAsync({ id: selectedWorker.id, adminNotes });
+      await approveWorker.mutateAsync({ id: selectedWorker.user_id, adminNotes });
       toast.success('Worker approved successfully');
       setShowDetailModal(false);
       setAdminNotes('');
-    } catch (error) {
+    } catch {
       toast.error('Failed to approve worker');
     }
   };
@@ -71,11 +74,11 @@ const WorkerApproval = () => {
       return;
     }
     try {
-      await rejectWorker.mutateAsync({ id: selectedWorker.id, reason: adminNotes });
-      toast.success('Worker rejected');
+      await rejectWorker.mutateAsync({ id: selectedWorker.user_id, reason: adminNotes });
+      toast.success('Worker application rejected');
       setShowDetailModal(false);
       setAdminNotes('');
-    } catch (error) {
+    } catch {
       toast.error('Failed to reject worker');
     }
   };
@@ -85,76 +88,50 @@ const WorkerApproval = () => {
       toast.error('Please enter a message');
       return;
     }
-    
-    // Update verification request with admin notes
     try {
-      await supabase
-        .from('verification_requests')
-        .update({ 
+      // Find the latest pending verification request and update it
+      const pending = verificationRequests.find((r: any) => r.status === 'pending');
+      if (pending) {
+        await api.patch(`/accounts/verification_requests/${pending.id}/`, {
           admin_notes: requestMessage,
-          status: 'info_requested'
-        })
-        .eq('id', selectedWorker.id);
-      
-      toast.success('Information request sent to worker');
+          status: 'pending',  // keep as pending, just add note
+        });
+      }
+      toast.success('Information request logged');
       setShowRequestInfoModal(false);
       setRequestMessage('');
-      setShowDetailModal(false);
-    } catch (error) {
+    } catch {
       toast.error('Failed to send request');
     }
   };
 
   const columns = [
-    { 
-      key: 'avatar', 
-      header: '', 
+    {
+      key: 'avatar',
+      header: '',
       render: (item: any) => (
         <Avatar className="h-10 w-10">
           <AvatarFallback className="bg-primary/10 text-primary">
-            {item.workers?.name?.split(' ').map((n: string) => n[0]).join('') || '?'}
+            {item.name?.split(' ').map((n: string) => n[0]).join('') || '?'}
           </AvatarFallback>
         </Avatar>
-      )
-    },
-    { key: 'id', header: 'Request ID', sortable: true, render: (item: any) => item.id.slice(0, 8) },
-    { key: 'name', header: 'Name', sortable: true, render: (item: any) => item.workers?.name || '-' },
-    { key: 'phone', header: 'Phone', render: (item: any) => item.workers?.phone || '-' },
-    { key: 'email', header: 'Email', render: (item: any) => item.workers?.email || '-' },
-    {
-      key: 'request_type',
-      header: 'Request Type',
-      render: (item: any) => (
-        <Badge variant="secondary" className="capitalize">{item.request_type?.replace('_', ' ')}</Badge>
       ),
     },
+    { key: 'user_id', header: 'Worker ID', sortable: true, render: (item: any) => <span className="font-mono text-xs">{item.user_id?.slice(0, 8)}</span> },
+    { key: 'name', header: 'Name', sortable: true, render: (item: any) => item.name || '-' },
+    { key: 'phone', header: 'Phone', render: (item: any) => item.phone || '-' },
+    { key: 'email', header: 'Email', render: (item: any) => item.email || '-' },
     {
-      key: 'documents',
-      header: 'Documents',
-      render: (item: any) => {
-        const docs = item.documents_submitted || [];
-        return <Badge variant="outline">{Array.isArray(docs) ? docs.length : 0} files</Badge>;
-      },
-    },
-    {
-      key: 'status',
+      key: 'worker_status',
       header: 'Status',
-      render: (item: any) => <StatusBadge status={item.status} />,
+      render: (item: any) => <StatusBadge status={item.worker_status} />,
     },
-    { key: 'created_at', header: 'Submitted', sortable: true, render: (item: any) => new Date(item.created_at).toLocaleDateString() },
+    { key: 'created_at', header: 'Registered', sortable: true, render: (item: any) => new Date(item.created_at).toLocaleDateString() },
     {
       key: 'actions',
       header: 'Actions',
       render: (item: any) => (
-        <Button
-          variant="default"
-          size="sm"
-          onClick={(e) => {
-            e.stopPropagation();
-            setSelectedWorker(item);
-            setShowDetailModal(true);
-          }}
-        >
+        <Button variant="default" size="sm" onClick={(e) => { e.stopPropagation(); setSelectedWorker(item); setShowDetailModal(true); }}>
           <Eye className="w-4 h-4 mr-1" />
           Review
         </Button>
@@ -170,9 +147,7 @@ const WorkerApproval = () => {
           <p className="page-subtitle">Loading verification requests...</p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => (
-            <Skeleton key={i} className="h-24" />
-          ))}
+          {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-24" />)}
         </div>
       </div>
     );
@@ -186,40 +161,17 @@ const WorkerApproval = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-warning">{stats?.pending || pendingWorkers.length}</div>
-            <p className="text-sm text-muted-foreground">Pending Approvals</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-success">{stats?.verified || 0}</div>
-            <p className="text-sm text-muted-foreground">Verified Workers</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-destructive">{stats?.suspended || 0}</div>
-            <p className="text-sm text-muted-foreground">Suspended</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-primary">{stats?.total || 0}</div>
-            <p className="text-sm text-muted-foreground">Total Workers</p>
-          </CardContent>
-        </Card>
+        <Card><CardContent className="pt-6"><div className="text-2xl font-bold text-warning">{stats?.pending || pendingWorkers.length}</div><p className="text-sm text-muted-foreground">Pending Approvals</p></CardContent></Card>
+        <Card><CardContent className="pt-6"><div className="text-2xl font-bold text-success">{stats?.verified || 0}</div><p className="text-sm text-muted-foreground">Verified Workers</p></CardContent></Card>
+        <Card><CardContent className="pt-6"><div className="text-2xl font-bold text-destructive">{stats?.suspended || 0}</div><p className="text-sm text-muted-foreground">Suspended</p></CardContent></Card>
+        <Card><CardContent className="pt-6"><div className="text-2xl font-bold text-primary">{stats?.total || 0}</div><p className="text-sm text-muted-foreground">Total Workers</p></CardContent></Card>
       </div>
 
       <DataTable
         data={pendingWorkers}
         columns={columns}
         searchPlaceholder="Search by ID, name, or phone..."
-        onRowClick={(item) => {
-          setSelectedWorker(item);
-          setShowDetailModal(true);
-        }}
+        onRowClick={(item) => { setSelectedWorker(item); setShowDetailModal(true); }}
       />
 
       {/* Detail Modal */}
@@ -227,9 +179,7 @@ const WorkerApproval = () => {
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Worker Approval Review</DialogTitle>
-            <DialogDescription>
-              Review worker details and documents before approval
-            </DialogDescription>
+            <DialogDescription>Review worker details and documents before approval</DialogDescription>
           </DialogHeader>
 
           {selectedWorker && (
@@ -239,139 +189,106 @@ const WorkerApproval = () => {
                 <TabsTrigger value="documents">Documents</TabsTrigger>
                 <TabsTrigger value="action">Take Action</TabsTrigger>
               </TabsList>
-              
+
               <TabsContent value="details" className="space-y-4 mt-4">
                 <div className="flex items-center gap-4">
                   <Avatar className="h-16 w-16">
                     <AvatarFallback className="bg-primary/10 text-primary text-xl">
-                      {selectedWorker.workers?.name?.split(' ').map((n: string) => n[0]).join('') || '?'}
+                      {selectedWorker.name?.split(' ').map((n: string) => n[0]).join('') || '?'}
                     </AvatarFallback>
                   </Avatar>
                   <div>
-                    <h3 className="text-xl font-semibold">{selectedWorker.workers?.name || 'Unknown'}</h3>
-                    <p className="text-muted-foreground">{selectedWorker.workers?.email || 'No email'}</p>
+                    <h3 className="text-xl font-semibold">{selectedWorker.name || 'Unknown'}</h3>
+                    <p className="text-muted-foreground">{selectedWorker.email || 'No email'}</p>
                   </div>
                 </div>
-                
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <Label className="text-muted-foreground">Phone</Label>
-                    <p className="font-medium">{selectedWorker.workers?.phone || '-'}</p>
+                    <p className="font-medium">{selectedWorker.phone || '-'}</p>
                   </div>
                   <div className="space-y-1">
                     <Label className="text-muted-foreground">Worker ID</Label>
-                    <p className="font-medium font-mono">{selectedWorker.workers?.id?.slice(0, 12) || '-'}</p>
+                    <p className="font-medium font-mono">{selectedWorker.user_id?.slice(0, 12) || '-'}</p>
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-muted-foreground">Request Type</Label>
-                    <Badge variant="secondary" className="capitalize">{selectedWorker.request_type?.replace('_', ' ')}</Badge>
+                    <Label className="text-muted-foreground">Status</Label>
+                    <StatusBadge status={selectedWorker.worker_status} />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-muted-foreground">Submitted Date</Label>
+                    <Label className="text-muted-foreground">Registered</Label>
                     <p className="font-medium">{new Date(selectedWorker.created_at).toLocaleDateString()}</p>
                   </div>
                   <div className="space-y-1 col-span-2">
                     <Label className="text-muted-foreground">Bio</Label>
-                    <p className="font-medium">{selectedWorker.workers?.bio || 'No bio provided'}</p>
+                    <p className="font-medium">{selectedWorker.bio || 'No bio provided'}</p>
                   </div>
                   <div className="space-y-1">
                     <Label className="text-muted-foreground">Experience</Label>
-                    <p className="font-medium">{selectedWorker.workers?.experience_years || 0} years</p>
+                    <p className="font-medium">{selectedWorker.experience_years || 0} years</p>
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-muted-foreground">Languages</Label>
-                    <div className="flex flex-wrap gap-1">
-                      {(selectedWorker.workers?.languages || []).map((lang: string) => (
-                        <Badge key={lang} variant="outline">{lang}</Badge>
-                      ))}
-                    </div>
+                    <Label className="text-muted-foreground">Gov ID Type</Label>
+                    <p className="font-medium capitalize">{selectedWorker.government_id_type || '-'}</p>
                   </div>
                 </div>
               </TabsContent>
-              
+
               <TabsContent value="documents" className="space-y-4 mt-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {documents.length > 0 ? documents.map((doc: any) => (
-                    <Card key={doc.id}>
+                  {verificationRequests.length > 0 ? verificationRequests.map((req: any) => (
+                    <Card key={req.id}>
                       <CardHeader className="pb-2">
                         <div className="flex items-center justify-between">
-                          <CardTitle className="text-sm capitalize">{doc.document_type?.replace('_', ' ')}</CardTitle>
-                          <StatusBadge status={doc.verification_status} />
+                          <CardTitle className="text-sm capitalize">{req.request_type?.replace('_', ' ')}</CardTitle>
+                          <StatusBadge status={req.status} />
                         </div>
                       </CardHeader>
                       <CardContent className="space-y-2">
                         <div className="space-y-1">
-                          <Label className="text-xs text-muted-foreground">Document Number</Label>
-                          <p className="font-mono text-sm">{doc.document_number || 'Not provided'}</p>
+                          <Label className="text-xs text-muted-foreground">Documents Submitted</Label>
+                          <Badge variant="outline">
+                            {Array.isArray(req.documents_submitted) ? req.documents_submitted.length : 0} files
+                          </Badge>
                         </div>
-                        <div className="flex gap-2">
-                          {doc.front_image_url && (
-                            <div className="flex-1 aspect-video bg-muted rounded-lg flex items-center justify-center">
-                              <div className="text-center">
-                                <Image className="w-8 h-8 mx-auto text-muted-foreground" />
-                                <p className="text-xs text-muted-foreground mt-1">Front</p>
-                              </div>
-                            </div>
-                          )}
-                          {doc.back_image_url && (
-                            <div className="flex-1 aspect-video bg-muted rounded-lg flex items-center justify-center">
-                              <div className="text-center">
-                                <Image className="w-8 h-8 mx-auto text-muted-foreground" />
-                                <p className="text-xs text-muted-foreground mt-1">Back</p>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                        <Button variant="outline" size="sm" className="w-full">
-                          <Download className="w-3 h-3 mr-1" />
-                          Download Document
-                        </Button>
+                        {req.admin_notes && (
+                          <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground">Admin Notes</Label>
+                            <p className="text-sm">{req.admin_notes}</p>
+                          </div>
+                        )}
                       </CardContent>
                     </Card>
                   )) : (
                     <div className="col-span-2 text-center py-8 text-muted-foreground">
                       <FileText className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                      <p>No documents uploaded yet</p>
+                      <p>No verification requests found</p>
                     </div>
                   )}
                 </div>
               </TabsContent>
-              
+
               <TabsContent value="action" className="space-y-4 mt-4">
                 <div className="space-y-2">
                   <Label>Admin Notes</Label>
-                  <Textarea 
-                    placeholder="Add notes about this application (required for rejection)..." 
+                  <Textarea
+                    placeholder="Add notes about this application (required for rejection)..."
                     value={adminNotes}
                     onChange={(e) => setAdminNotes(e.target.value)}
                     rows={4}
                   />
                 </div>
-                
                 <div className="flex flex-wrap gap-2">
-                  <Button 
-                    variant="outline" 
-                    onClick={() => {
-                      setShowRequestInfoModal(true);
-                    }}
-                  >
+                  <Button variant="outline" onClick={() => setShowRequestInfoModal(true)}>
                     <MessageSquare className="w-4 h-4 mr-2" />
                     Request More Info
                   </Button>
-                  <Button 
-                    variant="outline" 
-                    className="text-destructive border-destructive hover:bg-destructive/10"
-                    onClick={handleReject}
-                    disabled={rejectWorker.isPending}
-                  >
+                  <Button variant="outline" className="text-destructive border-destructive hover:bg-destructive/10"
+                    onClick={handleReject} disabled={rejectWorker.isPending}>
                     <X className="w-4 h-4 mr-2" />
                     {rejectWorker.isPending ? 'Rejecting...' : 'Deny Application'}
                   </Button>
-                  <Button 
-                    className="bg-success hover:bg-success/90"
-                    onClick={handleApprove}
-                    disabled={approveWorker.isPending}
-                  >
+                  <Button className="bg-success hover:bg-success/90" onClick={handleApprove} disabled={approveWorker.isPending}>
                     <Check className="w-4 h-4 mr-2" />
                     {approveWorker.isPending ? 'Approving...' : 'Approve Worker'}
                   </Button>
@@ -387,13 +304,11 @@ const WorkerApproval = () => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Request Additional Information</DialogTitle>
-            <DialogDescription>
-              Send a message to the worker requesting more information
-            </DialogDescription>
+            <DialogDescription>Send a note requesting more information from the worker</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Message to Worker</Label>
+              <Label>Message / Note</Label>
               <Textarea
                 placeholder="Please provide additional information about..."
                 value={requestMessage}
@@ -403,12 +318,8 @@ const WorkerApproval = () => {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowRequestInfoModal(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleRequestInfo}>
-              Send Request
-            </Button>
+            <Button variant="outline" onClick={() => setShowRequestInfoModal(false)}>Cancel</Button>
+            <Button onClick={handleRequestInfo}>Send Request</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
