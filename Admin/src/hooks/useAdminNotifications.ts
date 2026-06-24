@@ -1,27 +1,19 @@
-/**
- * src/hooks/useAdminNotifications.ts
- * Replaced all supabase calls with Django API /core/admin_notifications/
- * Field mapping: admin_id (Supabase) → recipient_id (Django, aliased as admin_id by serializer)
- */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/api';
+import { supabase } from '@/integrations/supabase/client';
 
 export interface AdminNotification {
   id: string;
-  admin_id: string | null;        // aliased from recipient_id
-  recipient: string | null;
+  admin_id: string | null;
   title: string;
   body: string;
-  notification_type: string | null;
+  notification_type: string;
   priority: string;
+  action_url: string | null;
   data: Record<string, unknown>;
   is_read: boolean;
   read_at: string | null;
   created_at: string;
 }
-
-const unwrap = (data: any): AdminNotification[] =>
-  data?.results ?? (Array.isArray(data) ? data : []);
 
 export const useAdminNotifications = () => {
   const queryClient = useQueryClient();
@@ -29,17 +21,27 @@ export const useAdminNotifications = () => {
   const { data: notifications = [], isLoading, error } = useQuery({
     queryKey: ['admin-notifications'],
     queryFn: async () => {
-      const { data } = await api.get('/core/admin_notifications/');
-      return unwrap(data);
+      const { data, error } = await supabase
+        .from('admin_notifications')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (error) throw error;
+      return data as AdminNotification[];
     },
-    retry: 1,
   });
 
   const unreadCount = notifications.filter(n => !n.is_read).length;
 
   const markAsRead = useMutation({
     mutationFn: async (notificationId: string) => {
-      await api.post(`/core/admin_notifications/${notificationId}/mark_read/`);
+      const { error } = await supabase
+        .from('admin_notifications')
+        .update({ is_read: true, read_at: new Date().toISOString() })
+        .eq('id', notificationId);
+
+      if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-notifications'] });
@@ -48,7 +50,12 @@ export const useAdminNotifications = () => {
 
   const markAllAsRead = useMutation({
     mutationFn: async () => {
-      await api.post('/core/admin_notifications/mark_all_read/');
+      const { error } = await supabase
+        .from('admin_notifications')
+        .update({ is_read: true, read_at: new Date().toISOString() })
+        .eq('is_read', false);
+
+      if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-notifications'] });
@@ -57,7 +64,12 @@ export const useAdminNotifications = () => {
 
   const deleteNotification = useMutation({
     mutationFn: async (notificationId: string) => {
-      await api.delete(`/core/admin_notifications/${notificationId}/`);
+      const { error } = await supabase
+        .from('admin_notifications')
+        .delete()
+        .eq('id', notificationId);
+
+      if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-notifications'] });
